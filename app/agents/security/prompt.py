@@ -8,7 +8,7 @@ def get_security_prompt(proposal: str, judge_directive: str = None) -> str:
     if agent_md_path.exists():
         guidelines = agent_md_path.read_text(encoding="utf-8")
     else:
-        guidelines = "You are the Expert Security & Resilience Auditor."
+        guidelines = "You are the Expert Security Auditor."
 
     prompt = f"""{guidelines}
 
@@ -20,8 +20,8 @@ Critique the following architectural proposal draft:
 
 Provide your security review focusing STRICTLY on:
 1. Identity & Access Management (IAM), OAuth, and Session Security.
-2. Resilience, high availability, failover, and rate limiting.
-3. Input sanitization and OWASP Top 10 mitigation."""
+2. Threat modeling, data encryption (at rest and transit), and network isolation.
+3. Input sanitization, OWASP Top 10 mitigation, and compliance (SOC2/GDPR)."""
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize auditing the proposal's compliance with this judge feedback."

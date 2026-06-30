@@ -8,7 +8,7 @@ class AppConfig(BaseModel):
     location: str = Field(default="global")
     use_vertex_ai: bool = Field(default=True)
     developer_knowledge_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"))
-    model_id: str = Field(default="gemini-3.5-flash")
+    model_id: str = Field(default="gemini-2.5-pro")
     gate_threshold: float = Field(default=0.85)
     max_rounds: int = Field(default=10)
 
@@ -30,7 +30,7 @@ class AppConfig(BaseModel):
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
             use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"],
             developer_knowledge_api_key=os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"),
-            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-3.5-flash"),
+            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-2.5-pro"),
             gate_threshold=float(os.getenv("DEBATE_GATE_THRESHOLD", "0.85")),
             max_rounds=int(os.getenv("DEBATE_MAX_ROUNDS", "10")),
         )

@@ -214,14 +214,15 @@ export default function Home() {
     const output = rawData.output;
     
     let currentAgentName = null;
-    if (rawData.node_path) {
-      const path = rawData.node_path.toLowerCase();
+    const rawPath = rawData.node_path || (rawData.nodeInfo && rawData.nodeInfo.path) || (rawData.node_info && rawData.node_info.path);
+    if (rawPath) {
+      const path = String(rawPath).toLowerCase();
       if (path.includes("performance_agent_node") || path.includes("grill_node")) {
         currentAgentName = "Performance & Scaling Architect";
       } else if (path.includes("security_agent_node")) {
         currentAgentName = "Security & Resilience Auditor";
-      } else if (path.includes("devops_agent_node")) {
-        currentAgentName = "DevOps & Maintainability Lead";
+      } else if (path.includes("sre_agent_node")) {
+        currentAgentName = "SRE & Maintainability Lead";
       } else if (path.includes("evaluate_and_score_node")) {
         currentAgentName = "Master Architect Judge";
       } else if (path.includes("synthesis_node")) {
@@ -236,9 +237,11 @@ export default function Home() {
           const lastChunk = prev.length > 0 ? prev[prev.length - 1] : null;
           const agentToUse = currentAgentName || (lastChunk ? lastChunk.agent : null);
           
-          if (lastChunk && lastChunk.agent === agentToUse) {
+          const existingIndex = prev.findIndex(chunk => chunk.agent === agentToUse);
+          
+          if (existingIndex !== -1) {
             const updated = [...prev];
-            updated[updated.length - 1] = { ...lastChunk, text: lastChunk.text + textChunk };
+            updated[existingIndex] = { ...updated[existingIndex], text: updated[existingIndex].text + textChunk };
             return updated;
           } else {
             return [...prev, { agent: agentToUse, text: textChunk }];
@@ -658,16 +661,16 @@ export default function Home() {
                       {/* 2. Critics response */}
                       {(() => {
                         const critiqueText = round.critique || "";
-                        const hasDevopsSplit = critiqueText.includes("--- DEVOPS CRITIQUE ---");
-                        const parts = hasDevopsSplit ? critiqueText.split("--- DEVOPS CRITIQUE ---") : [critiqueText];
+                        const hasSreSplit = critiqueText.includes("--- SRE CRITIQUE ---");
+                        const parts = hasSreSplit ? critiqueText.split("--- SRE CRITIQUE ---") : [critiqueText];
                         const securityPart = parts[0];
-                        const devopsPart = parts.length > 1 ? "--- DEVOPS CRITIQUE ---\n" + parts[1] : null;
+                        const srePart = parts.length > 1 ? "--- SRE CRITIQUE ---\n" + parts[1] : null;
                         return (
                           <div className="flex flex-col gap-4">
                             <div className="bg-slate-900/60 border border-slate-800/80 border-l-4 border-l-rose-500 rounded-xl p-4">
                               <div className="flex justify-between items-center mb-2.5">
                                 <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
-                                  <Shield className="w-3.5 h-3.5 text-rose-400" /> Security & Resilience Auditor
+                                  <Shield className="w-3.5 h-3.5 text-rose-400" /> Security Auditor
                                 </span>
                                 <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_3A</span>
                               </div>
@@ -675,16 +678,16 @@ export default function Home() {
                                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{securityPart}</ReactMarkdown>
                               </div>
                             </div>
-                            {devopsPart && (
+                            {srePart && (
                               <div className="bg-slate-900/60 border border-slate-800/80 border-l-4 border-l-cyan-500 rounded-xl p-4">
                                 <div className="flex justify-between items-center mb-2.5">
                                   <span className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
-                                    <Layers className="w-3.5 h-3.5 text-cyan-400" /> DevOps & Maintainability Lead
-                                  </span>
+                                  <Terminal className="w-3.5 h-3.5 text-cyan-400" /> SRE & Maintainability Lead
+                                </span>
                                   <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_3B</span>
                                 </div>
                                 <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{devopsPart}</ReactMarkdown>
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{srePart}</ReactMarkdown>
                                 </div>
                               </div>
                             )}
@@ -742,7 +745,7 @@ export default function Home() {
                       bgColor = "bg-rose-950/20";
                       pulseColor = "bg-rose-400";
                       borderLeft = "border-l-rose-500";
-                    } else if (chunk.agent?.includes("DevOps")) {
+                    } else if (chunk.agent?.includes("SRE")) {
                       borderColor = "border-cyan-500";
                       textColor = "text-cyan-400";
                       bgColor = "bg-cyan-950/20";

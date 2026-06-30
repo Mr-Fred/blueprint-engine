@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    return genai.Client(vertexai=use_vertex, location="global")
+    location = "us-central1" if use_vertex else None
+    return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
 
 from google.adk.events.request_input import RequestInput
 from typing import Any
@@ -26,44 +27,98 @@ async def grill_node(ctx: Context, node_input: Any):
     client = get_genai_client()
     concept = ctx.state.get("concept", "")
     
-    # Handle user responses injected via resume
-    grill_history = ctx.state.get("grill_history", [])
-    if isinstance(node_input, dict) and "grill_question" in node_input:
-        user_answer = node_input["grill_question"]
-        grill_history.append({"role": "user", "content": str(user_answer)})
-        ctx.state["grill_history"] = grill_history
-
-    question_count = sum(1 for msg in grill_history if msg["role"] == "assistant")
+    previous_interaction_id = ctx.state.get("temp:grill_interaction_id")
+    
+    question_count = ctx.state.get("temp:grill_question_count", 0)
     max_questions = 10
     
-    prompt = f"""
-    You are the Lead Performance Architect preparing to design: "{concept}".
-    Your goal is to grill the user to resolve critical architectural design dependencies. 
-    Interview him relentlessly about every aspect of this project until you reach a shared understanding. 
-    Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. 
-    For each question, provide your recommended answer. Ask the questions one at a time.
+    # Maintain a log for the UI to render the chat history
+    grill_history = ctx.state.get("grill_history", [])
     
-    Conversation so far:
-    {grill_history}
-    """
+    # Handle user responses injected via resume
+    user_answer = ""
     
+    # Securely extract the resume payload from ctx.user_content
+    if ctx.user_content and ctx.user_content.role == "user" and ctx.user_content.parts:
+        try:
+            import json
+            payload = json.loads(ctx.user_content.parts[0].text)
+            if isinstance(payload, dict):
+                node_input = payload
+        except Exception:
+            pass
+
+    if isinstance(node_input, dict) and "grill_question" in node_input:
+        user_answer = str(node_input["grill_question"])
+        question_count += 1
+        ctx.state["temp:grill_question_count"] = question_count
+        grill_history.append({"role": "user", "content": user_answer})
+        ctx.state["grill_history"] = grill_history
+
+    if not previous_interaction_id:
+        prompt = f"""
+        You are the Lead Performance Architect preparing to design: "{concept}".
+        Your goal is to grill the user to resolve critical architectural design dependencies. 
+        Interview him relentlessly about every aspect of this project until you reach a shared understanding. 
+        Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. 
+        For each question, provide your recommended answer. Ask the questions one at a time.
+        """
+    else:
+        prompt = user_answer
+
     if question_count >= max_questions:
         prompt += "\nCRITICAL: You have reached the maximum number of questions. You MUST reply exactly with: READY"
     else:
         prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
     
-    response = await client.aio.models.generate_content(
-        model=settings.model_id,
-        contents=prompt
-    )
-    text = response.text.strip()
+    try:
+        response = await client.aio.interactions.create(
+            model=settings.model_id,
+            input=prompt,
+            previous_interaction_id=previous_interaction_id
+        )
+        
+        if hasattr(response, "id") and response.id:
+            ctx.state["temp:grill_interaction_id"] = response.id
+            
+        text = response.steps[-1].content[0].text.strip()
+    except Exception as e:
+        logger.warning(f"Interactions failed in grill_node, falling back to generate_content: {e}")
+        # Standard stateless fallback logic requires manual history injection
+        fallback_prompt = f"""
+        You are the Lead Performance Architect preparing to design: "{concept}".
+        Your goal is to grill the user to resolve critical architectural design dependencies. 
+        Interview him relentlessly about every aspect of this project until you reach a shared understanding. 
+        Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. 
+        For each question, provide your recommended answer. Ask the questions one at a time.
+        """
+        if grill_history:
+            history_str = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in grill_history])
+            fallback_prompt += f"\n\nConversation History:\n{history_str}\n"
+            
+        if question_count >= max_questions:
+            fallback_prompt += "\nCRITICAL: You have reached the maximum number of questions. You MUST reply exactly with: READY"
+        else:
+            fallback_prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
+            
+        fallback_res = await client.aio.models.generate_content(
+            model=settings.model_id,
+            contents=fallback_prompt
+        )
+        text = fallback_res.text.strip()
+    
+    # Append model's output to UI log
+    grill_history.append({"role": "assistant", "content": text})
+    ctx.state["grill_history"] = grill_history
     
     if text == "READY":
         yield Event(output=concept, route="ready", state=ctx.state.to_dict())
         return
         
-    grill_history.append({"role": "assistant", "content": text})
-    ctx.state["grill_history"] = grill_history
+    yield Event(
+        content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
+        state=ctx.state.to_dict()
+    )
     
     # Pause the graph and ask the user
     yield RequestInput(

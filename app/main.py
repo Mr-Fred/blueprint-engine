@@ -212,8 +212,13 @@ async def stream_debate(project_id: str):
     
     async def sse_generator():
         try:
-            session = await GLOBAL_SESSION_SERVICE.get_session(session_id=project_id)
-        except Exception:
+            session = await GLOBAL_SESSION_SERVICE.get_session(
+                app_name="mad_engine",
+                user_id="judge",
+                session_id=project_id
+            )
+        except Exception as e:
+            print(f"Failed to get session: {e}")
             session = None
             
         if not session:
@@ -304,8 +309,13 @@ async def resume_stream(project_id: str):
         
     async def sse_generator():
         try:
-            session = await GLOBAL_SESSION_SERVICE.get_session(session_id=project_id)
-        except Exception:
+            session = await GLOBAL_SESSION_SERVICE.get_session(
+                app_name="mad_engine",
+                user_id="judge",
+                session_id=project_id
+            )
+        except Exception as e:
+            print(f"Failed to get session: {e}")
             session = None
             
         if not session:

@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    return genai.Client(vertexai=use_vertex, location="global")
+    location = "us-central1" if use_vertex else None
+    return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
 
 @node
 async def security_agent_node(ctx: Context, node_input: str):
