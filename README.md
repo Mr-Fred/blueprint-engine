@@ -1,6 +1,6 @@
 # MAD Engine - Multi-Agent Self-Correcting Software Architect Debate
 
-**Capstone Project for the 5-Day AI Agents: Intensive Vibe Coding Course With Google**
+Capstone Project for the 5-Day AI Agents: Intensive Vibe Coding Course With Google
 
 The **MAD Engine** (Multi-Agent Architect Debate System) is an interactive, real-time software blueprint and design debate system powered by the Agent Development Kit (ADK) 2.0. This project serves as a capstone to demonstrate the knowledge and skills gained during the Intensive Vibe Coding Course and applies them to a real-world use case.
 

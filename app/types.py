@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 class PillarScores(BaseModel):
     performance: float = Field(..., ge=0.0, le=1.0, description="Performance score from 0.0 to 1.0 (Latency, throughput, and hot path execution)")
@@ -32,6 +32,7 @@ class DebateState(BaseModel):
     concept: str = Field(..., description="The high-level software idea being architected")
     current_round: int = Field(default=1, description="The current active round index")
     rounds_history: List[DebateRound] = Field(default_factory=list, description="All previous debate round exchanges")
+    grill_history: List[Dict[str, str]] = Field(default_factory=list, description="Chat log of the initial architectural grilling phase")
     consensus_achieved: bool = Field(default=False, description="True if all 6 pillar scores meet or exceed threshold")
     final_prd: Optional[str] = Field(None, description="The finalized Product Requirements Document (PRD)")
     final_architecture: Optional[str] = Field(None, description="The finalized Architecture Design document")

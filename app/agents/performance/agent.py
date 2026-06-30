@@ -17,6 +17,64 @@ def get_genai_client() -> genai.Client:
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
     return genai.Client(vertexai=use_vertex, location="global")
 
+from google.adk.events.request_input import RequestInput
+from typing import Any
+
+@node
+async def grill_node(ctx: Context, node_input: Any):
+    """Node that grills the user at the start of the debate to gather deep context via RequestInput."""
+    client = get_genai_client()
+    concept = ctx.state.get("concept", "")
+    
+    # Handle user responses injected via resume
+    grill_history = ctx.state.get("grill_history", [])
+    if isinstance(node_input, dict) and "grill_question" in node_input:
+        user_answer = node_input["grill_question"]
+        grill_history.append({"role": "user", "content": str(user_answer)})
+        ctx.state["grill_history"] = grill_history
+
+    question_count = sum(1 for msg in grill_history if msg["role"] == "assistant")
+    max_questions = 10
+    
+    prompt = f"""
+    You are the Lead Performance Architect preparing to design: "{concept}".
+    Your goal is to grill the user to resolve critical architectural design dependencies. 
+    Interview him relentlessly about every aspect of this project until you reach a shared understanding. 
+    Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. 
+    For each question, provide your recommended answer. Ask the questions one at a time.
+    
+    Conversation so far:
+    {grill_history}
+    """
+    
+    if question_count >= max_questions:
+        prompt += "\nCRITICAL: You have reached the maximum number of questions. You MUST reply exactly with: READY"
+    else:
+        prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
+    
+    response = await client.aio.models.generate_content(
+        model=settings.model_id,
+        contents=prompt
+    )
+    text = response.text.strip()
+    
+    if text == "READY":
+        yield Event(output=concept, route="ready", state=ctx.state.to_dict())
+        return
+        
+    grill_history.append({"role": "assistant", "content": text})
+    ctx.state["grill_history"] = grill_history
+    
+    # Pause the graph and ask the user
+    yield RequestInput(
+        payload={"name": "grill_question"},
+        message=text
+    )
+    
+    # Route back to itself so the resumed graph executes this node again with the user's answer
+    yield Event(output="Waiting for user", route="ask_user", state=ctx.state.to_dict())
+    return
+
 @node
 async def performance_agent_node(ctx: Context, node_input: str):
     """The Performance & Scaling Architect proposes or refines the design blueprint.

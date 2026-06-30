@@ -13,6 +13,14 @@ app/agents/[agent_role]/
 ```
 
 ### Architectural Constraints
+
 1. **Self-Contained Roles**: No prompt variables, execution states, or role instructions may cross folder boundaries. Each agent's functional boundary must be entirely contained within its subdirectory.
 2. **Asynchronous Engines**: All agent nodes must use modern asynchronous generation (`aio` endpoints) to avoid event-loop starvation or freezing of streams.
 3. **Strict Validation**: Graph states and scoring configurations must follow structured schemas with clear boundaries.
+
+## ADK 2.0 Execution Context Best Practices
+
+1. **Modify State Safely via Structured Context Objects**: Never modify global state directly during an execution loop. Rely on `ctx.state`.
+2. **Leverage Built-in Variable Scoping Prefixes**: Use `temp:`, `user:`, and `app:` prefixes for appropriate data scoping.
+3. **Handle Updates inside @node Graph Workflows**: For Human-in-the-Loop, use `RequestInput` to pause execution, avoiding global flag polling.
+4. **General Context Rules of Thumb**: Keep state lightweight. Store only IDs or primitive preferences, and persist heavy objects outside `ctx.state`.

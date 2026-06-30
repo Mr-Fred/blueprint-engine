@@ -22,6 +22,7 @@ from app.shared_state import ACTIVE_DIRECTIVES, FORCE_SYNTHESIS_FLAGS
 from app.agents.performance.agent import performance_agent_node
 from app.agents.security.agent import security_agent_node
 from app.agents.devops.agent import devops_agent_node
+from app.agents.performance.agent import grill_node
 
 # Initialize Google Gen AI Client
 def get_genai_client() -> genai.Client:
@@ -47,6 +48,10 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
         project_id = "default_proj"
         concept = str(node_input)
     
+    # Check if we are resuming an existing restored state
+    if ctx.state.get("current_round", 0) > 0:
+        return Event(output=ctx.state.get("concept"), state=ctx.state.to_dict())
+    
     # Store initial concept and project_id in the workflow state
     ctx.state["project_id"] = project_id
     ctx.state["concept"] = concept
@@ -65,19 +70,34 @@ class ScoreResult(BaseModel):
     evaluation_summary: str = Field(..., description="Detailed summary explaining the scores")
 
 @node
-def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
+async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
     """Node 4: Evaluates proposal and critiques, scores them on the 6 pillars, and routes."""
+    
+    # Check if we are resuming from a Human-in-the-Loop review pause
+    if isinstance(node_input, dict) and "judge_review" in node_input:
+        user_choice = str(node_input["judge_review"]).strip()
+        if user_choice.upper() == "SYNTHESIZE":
+            ctx.state["consensus_achieved"] = True
+            yield Event(output=ctx.state.to_dict(), route="synthesize", state=ctx.state.to_dict())
+            return
+        elif user_choice.upper() == "CONTINUE" or not user_choice:
+            pass # Just continue the loop normally
+        else:
+            ctx.state["latest_judge_directive"] = user_choice
+            
+        proposal = ctx.state.get("latest_proposal", "")
+        ctx.state["temp:latest_proposal"] = proposal
+        yield Event(output=proposal, route="continue", state=ctx.state.to_dict())
+        return
+
     client = get_genai_client()
     
     # Extract parallel node outputs merged by JoinNode
-    # security_agent_node output is keyed as 'security_agent_node'
-    # devops_agent_node output is keyed as 'devops_agent_node'
     security_critique = node_input.get("security_agent_node", "")
     devops_critique = node_input.get("devops_agent_node", "")
     
     proposal = ctx.state.get("latest_proposal", "")
     if not proposal:
-        # Fallback to last round's draft
         proposal = "N/A"
         
     combined_critiques = f"--- SECURITY AUDIT ---\n{security_critique}\n\n--- DEVOPS CRITIQUE ---\n{devops_critique}"
@@ -95,7 +115,7 @@ def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
     Assign a score between 0.0 (failing/flawed) and 1.0 (perfectly ready) for the 6 software quality pillars.
     """
 
-    response = client.models.generate_content(
+    response = await client.aio.models.generate_content(
         model=settings.model_id,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -104,19 +124,14 @@ def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         )
     )
     
-    # Parse structured JSON response
     result_data = ScoreResult.model_validate_json(response.text)
     scores = result_data.scores
     
     project_id = ctx.state.get("project_id", "default_proj")
     current_round = ctx.state.get("current_round", 1)
     
-    # Read active directive (and pop it from the shared register so it's not reused next round)
-    judge_directive = ACTIVE_DIRECTIVES.get(project_id) or ctx.state.get("latest_judge_directive", None)
-    if project_id in ACTIVE_DIRECTIVES:
-        del ACTIVE_DIRECTIVES[project_id]
+    judge_directive = ctx.state.get("latest_judge_directive", None)
         
-    # Record this round in history
     new_round = DebateRound(
         round_number=current_round,
         proposal_draft=proposal,
@@ -125,61 +140,52 @@ def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         judge_directive=judge_directive
     )
     
-    # Update local state list
-    history = ctx.state.get("rounds_history", [])
-    history.append(new_round.model_dump())
-    ctx.state["rounds_history"] = history
+    import json
+    FilesystemJail.write_project_file(project_id, f"round_{current_round}.json", new_round.model_dump_json())
     
-    # Check if consensus achieved
     consensus = scores.meets_threshold(settings.gate_threshold)
     ctx.state["consensus_achieved"] = consensus
     
-    # Synchronize with global DEBATE_SESSIONS registry (lazy import prevents circular issues)
-    try:
-        from app.main import DEBATE_SESSIONS
-        if project_id in DEBATE_SESSIONS:
-            DEBATE_SESSIONS[project_id].current_round = current_round
-            DEBATE_SESSIONS[project_id].rounds_history = [
-                DebateRound.model_validate(r) for r in ctx.state["rounds_history"]
-            ]
-            DEBATE_SESSIONS[project_id].consensus_achieved = consensus
-    except Exception as e:
-        # Graceful fallback if not running from main FastAPI context (e.g. tests)
-        pass
-    
-    # Reset latest judge directive now that it has been addressed in this round
     ctx.state["latest_judge_directive"] = None
-    
-    # Increment round counter
     ctx.state["current_round"] = current_round + 1
     
-    # Check for force synthesis override or round limits
-    force_synthesis = ctx.state.get("force_synthesis_flag", False) or FORCE_SYNTHESIS_FLAGS.get(project_id, False)
-    if project_id in FORCE_SYNTHESIS_FLAGS:
-        del FORCE_SYNTHESIS_FLAGS[project_id]
-        
-    if consensus or force_synthesis or current_round >= settings.max_rounds:
+    if consensus or current_round >= settings.max_rounds:
         ctx.state["consensus_achieved"] = True
-        return Event(output=ctx.state.to_dict(), route="synthesize", state=ctx.state.to_dict())
+        yield Event(output=ctx.state.to_dict(), route="synthesize", state=ctx.state.to_dict())
+        return
     
-    # Otherwise, loop back. We also save the proposal in state so the next iteration can read it.
+    # Save the proposal in state so the next iteration can read it if resumed
     ctx.state["latest_proposal"] = proposal
-    return Event(output=proposal, route="continue", state=ctx.state.to_dict())
+    
+    # Rule 3 Fix: We didn't reach consensus, so we yield RequestInput to allow HITL intervention
+    yield RequestInput(
+        payload={"name": "judge_review"},
+        message=f"Round {current_round} complete. Scores: {scores.model_dump_json()}. Reply 'SYNTHESIZE' to force finish, 'CONTINUE' to proceed, or provide a text directive."
+    )
+    
+    yield Event(output="Waiting for judge review", route="review", state=ctx.state.to_dict())
+    return
 
 @node
-def synthesis_node(ctx: Context, node_input: dict) -> Event:
+async def synthesis_node(ctx: Context, node_input: dict) -> Event:
     """Node 5: Compiles the final PRD.md and ARCHITECTURE.md and writes them safely."""
     client = get_genai_client()
     project_id = ctx.state.get("project_id", "default_proj")
     concept = ctx.state.get("concept", "")
-    history = ctx.state.get("rounds_history", [])
-
-    # Format the entire debate ledger
+    
+    current_round = ctx.state.get("current_round", 1)
+    rounds_count = current_round - 1
     history_text = ""
-    for r in history:
-        history_text += f"\n--- Round {r.get('round_number')} Scores: {r.get('scores')} ---\nPROPOSAL:\n{r.get('proposal_draft')}\n\nCRITIQUE:\n{r.get('critique')}\n"
+    
+    import json
+    for i in range(1, rounds_count + 1):
+        try:
+            round_data = FilesystemJail.read_project_file(project_id, f"round_{i}.json")
+            r = json.loads(round_data)
+            history_text += f"\n--- Round {r.get('round_number')} Scores: {r.get('scores')} ---\nPROPOSAL:\n{r.get('proposal_draft')}\n\nCRITIQUE:\n{r.get('critique')}\n"
+        except Exception:
+            pass
 
-    # 1. Synthesize PRD.md
     prd_prompt = f"""
     You are the Principal Product Owner. 
     Synthesize the final, rigorous Product Requirements Document (PRD) for the concept: "{concept}"
@@ -188,10 +194,9 @@ def synthesis_node(ctx: Context, node_input: dict) -> Event:
     
     Include: 1. Goal Description, 2. Target Persona & Use Cases, 3. Complete functional requirements, 4. Non-Functional constraints, and 5. A numbered, horizontal implementation TASKLIST.
     """
-    prd_response = client.models.generate_content(model=settings.model_id, contents=prd_prompt)
+    prd_response = await client.aio.models.generate_content(model=settings.model_id, contents=prd_prompt)
     prd_content = prd_response.text
 
-    # 2. Synthesize ARCHITECTURE.md
     arch_prompt = f"""
     You are the Elite Software Architect.
     Synthesize the final, rigorous ARCHITECTURE.md design blueprint for the concept: "{concept}"
@@ -200,30 +205,17 @@ def synthesis_node(ctx: Context, node_input: dict) -> Event:
     
     Format following strict Hexagonal Architecture / clean-code geometry guidelines.
     """
-    arch_response = client.models.generate_content(model=settings.model_id, contents=arch_prompt)
+    arch_response = await client.aio.models.generate_content(model=settings.model_id, contents=arch_prompt)
     arch_content = arch_response.text
 
-    # Write files securely using our FilesystemJail utility
     FilesystemJail.write_project_file(project_id, "PRD.md", prd_content)
     FilesystemJail.write_project_file(project_id, "ARCHITECTURE.md", arch_content)
 
-    ctx.state["final_prd"] = prd_content
-    ctx.state["final_architecture"] = arch_content
+    ctx.state["final_prd"] = "[Saved to PRD.md]"
+    ctx.state["final_architecture"] = "[Saved to ARCHITECTURE.md]"
 
-    # Save full state to disk for future restoration
-    import json
     state_dump = ctx.state.to_dict()
     FilesystemJail.write_project_file(project_id, "state.json", json.dumps(state_dump, indent=2))
-
-    # Synchronize synthesized artifacts with global DEBATE_SESSIONS registry
-    try:
-        from app.main import DEBATE_SESSIONS
-        if project_id in DEBATE_SESSIONS:
-            DEBATE_SESSIONS[project_id].consensus_achieved = True
-            DEBATE_SESSIONS[project_id].final_prd = prd_content
-            DEBATE_SESSIONS[project_id].final_architecture = arch_content
-    except Exception as e:
-        pass
 
     return Event(output=ctx.state.to_dict(), state=ctx.state.to_dict())
 
@@ -232,11 +224,12 @@ root_agent = Workflow(
     name="architect_debate",
     edges=[
         ('START', initialize_debate),
-        (initialize_debate, performance_agent_node),
+        (initialize_debate, grill_node),
+        (grill_node, {"ask_user": grill_node, "ready": performance_agent_node}),
         (performance_agent_node, (security_agent_node, devops_agent_node)),
         ((security_agent_node, devops_agent_node), join_critiques),
         (join_critiques, evaluate_and_score_node),
-        (evaluate_and_score_node, {"continue": performance_agent_node, "synthesize": synthesis_node}),
+        (evaluate_and_score_node, {"continue": performance_agent_node, "synthesize": synthesis_node, "review": evaluate_and_score_node}),
     ],
     state_schema=DebateState,
 )

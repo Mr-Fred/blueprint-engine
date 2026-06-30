@@ -1,6 +1,7 @@
 "use client";
-
 import React, { useState, useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { 
   Play, 
   Send, 
@@ -23,10 +24,8 @@ import {
   Trash2
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-
 // API Base URL
 const API_BASE = "http://localhost:8000";
-
 // Define the core types corresponding to the backend Pydantic models
 interface PillarScores {
   performance: number;
@@ -36,7 +35,6 @@ interface PillarScores {
   maintainability: number;
   cost_efficiency: number;
 }
-
 interface DebateRound {
   round_number: number;
   proposal_draft: string;
@@ -44,28 +42,25 @@ interface DebateRound {
   scores: PillarScores;
   judge_directive: string | null;
 }
-
 interface DebateState {
   project_id: string;
   concept: string;
   current_round: number;
   rounds_history: DebateRound[];
+  grill_history?: {role: string, content: string}[];
   consensus_achieved: boolean;
   final_prd: string | null;
   final_architecture: string | null;
 }
-
 interface ProjectInfo {
   project_id: string;
   concept: string;
   status: string;
 }
-
 interface LiveStreamChunk {
   agent: string | null;
   text: string;
 }
-
 export default function Home() {
   // Application States
   const [conceptInput, setConceptInput] = useState("");
@@ -80,37 +75,32 @@ export default function Home() {
   const [liveStreams, setLiveStreams] = useState<LiveStreamChunk[]>([]);
   const [liveRound, setLiveRound] = useState<number>(1);
   
-  // Judge directives
-  const [judgeDirective, setJudgeDirective] = useState("");
-  const [isIntervening, setIsIntervening] = useState(false);
-  const [isForcingSynthesis, setIsForcingSynthesis] = useState(false);
+  // RequestInput Resumability
+  const [pendingInput, setPendingInput] = useState<{name: string, description: string} | null>(null);
+  const [resumeText, setResumeText] = useState("");
+  const [isResuming, setIsResuming] = useState(false);
   
   // Tab View for final documents
   const [activeDocTab, setActiveDocTab] = useState<"prd" | "architecture">("prd");
   const [copied, setCopied] = useState(false);
-
   const streamEndRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
-
   useEffect(() => {
     const timer = setTimeout(() => setIsMounted(true), 0);
     return () => clearTimeout(timer);
   }, []);
-
   // Suggested concepts for quick starting
   const SUGGESTED_CONCEPTS = [
     "High-throughput collaborative design whiteboard with canvas synchronization",
     "Jailed serverless microservices runtime executing untrusted sandboxed code",
     "Real-time fraud prevention engine with sub-10ms transactional latency limits"
   ];
-
   // Auto-scroll the live debate feed
   useEffect(() => {
     if (streamEndRef.current) {
       streamEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [liveStreams, activeProject?.rounds_history]);
-
   // Load existing projects on mount
   useEffect(() => {
     const fetchProjects = async () => {
@@ -126,7 +116,6 @@ export default function Home() {
     };
     fetchProjects();
   }, []);
-
   // Load project state from the backend
   const fetchProjectState = async (projectId: string) => {
     try {
@@ -139,7 +128,6 @@ export default function Home() {
       console.error("Error fetching project state:", err);
     }
   };
-
   // Start a new debate
   const handleStartDebate = async (conceptText: string) => {
     if (!conceptText.trim()) return;
@@ -172,6 +160,7 @@ export default function Home() {
         concept: conceptText,
         current_round: 1,
         rounds_history: [],
+        grill_history: [],
         consensus_achieved: false,
         final_prd: null,
         final_architecture: null
@@ -185,7 +174,83 @@ export default function Home() {
       setStreamError(errMsg);
     }
   };
-
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const processSSEEvent = (rawData: any, projectId: string, closeStream: () => void) => {
+    // Detect ADK 2.0 RequestInput suspension
+      if (rawData.request_input) {
+        setPendingInput({
+          name: rawData.request_input.name,
+          description: rawData.request_input.description
+        });
+        // The graph is paused. Wait for SUSPENDED event to close stream and sync state.
+        return;
+      }
+      
+      if (rawData.event_type === "SUSPENDED") {
+        setActiveProject(rawData.state);
+        setIsStreaming(false);
+        setLiveAgent(null);
+        setLiveStreams([]);
+        closeStream();
+        return;
+      }
+    if (rawData.event_type === "COMPLETE") {
+      setIsStreaming(false);
+      setActiveProject(rawData.state);
+      setLiveAgent(null);
+      setLiveStreams([]);
+      closeStream();
+      return;
+    }
+    
+    if (rawData.event_type === "ERROR") {
+      setIsStreaming(false);
+      setStreamError(rawData.message);
+      closeStream();
+      return;
+    }
+    
+    const content = rawData.content;
+    const output = rawData.output;
+    
+    let currentAgentName = null;
+    if (rawData.node_path) {
+      const path = rawData.node_path.toLowerCase();
+      if (path.includes("performance_agent_node") || path.includes("grill_node")) {
+        currentAgentName = "Performance & Scaling Architect";
+      } else if (path.includes("security_agent_node")) {
+        currentAgentName = "Security & Resilience Auditor";
+      } else if (path.includes("devops_agent_node")) {
+        currentAgentName = "DevOps & Maintainability Lead";
+      } else if (path.includes("evaluate_and_score_node")) {
+        currentAgentName = "Master Architect Judge";
+      } else if (path.includes("synthesis_node")) {
+        currentAgentName = "Synthesizing Final Assets...";
+      }
+      if (currentAgentName) setLiveAgent(currentAgentName);
+    }
+    if (content && content.parts) {
+      const textChunk = content.parts.map((p: { text?: string }) => p.text || "").join("");
+      if (textChunk) {
+        setLiveStreams(prev => {
+          const lastChunk = prev.length > 0 ? prev[prev.length - 1] : null;
+          const agentToUse = currentAgentName || (lastChunk ? lastChunk.agent : null);
+          
+          if (lastChunk && lastChunk.agent === agentToUse) {
+            const updated = [...prev];
+            updated[updated.length - 1] = { ...lastChunk, text: lastChunk.text + textChunk };
+            return updated;
+          } else {
+            return [...prev, { agent: agentToUse, text: textChunk }];
+          }
+        });
+      }
+    }
+    
+    if (output) {
+      fetchProjectState(projectId);
+    }
+  };
   // Establish SSE Event Source Connection
   const startSSEStream = (projectId: string) => {
     if (sseRef.current) {
@@ -193,77 +258,14 @@ export default function Home() {
     }
     
     setIsStreaming(true);
+    setPendingInput(null);
     const eventSource = new EventSource(`${API_BASE}/api/projects/${projectId}/stream`);
     sseRef.current = eventSource;
     
     eventSource.onmessage = (event) => {
       try {
         const rawData = JSON.parse(event.data);
-        
-        // Handle stream completion or custom terminal events
-        if (rawData.event_type === "COMPLETE") {
-          setIsStreaming(false);
-          setActiveProject(rawData.state);
-          setLiveAgent(null);
-          setLiveStreams([]);
-          eventSource.close();
-          return;
-        }
-        
-        if (rawData.event_type === "ERROR") {
-          setIsStreaming(false);
-          setStreamError(rawData.message);
-          eventSource.close();
-          return;
-        }
-        
-        // Handle standard ADK Runner Events
-        const content = rawData.content;
-        const output = rawData.output;
-        
-        // Detect current agent from event metadata (if available) or route transitions
-        let currentAgentName = null;
-        if (rawData.node_path) {
-          const path = rawData.node_path.toLowerCase();
-          if (path.includes("performance_agent_node")) {
-            currentAgentName = "Performance & Scaling Architect";
-          } else if (path.includes("security_agent_node")) {
-            currentAgentName = "Security & Resilience Auditor";
-          } else if (path.includes("devops_agent_node")) {
-            currentAgentName = "DevOps & Maintainability Lead";
-          } else if (path.includes("evaluate_and_score_node")) {
-            currentAgentName = "Master Architect Judge";
-          } else if (path.includes("synthesis_node")) {
-            currentAgentName = "Synthesizing Final Assets...";
-          }
-          if (currentAgentName) setLiveAgent(currentAgentName);
-        }
-
-        // If there's partial text generated, append it
-        if (content && content.parts) {
-          const textChunk = content.parts.map((p: { text?: string }) => p.text || "").join("");
-          if (textChunk) {
-            setLiveStreams(prev => {
-              const lastChunk = prev.length > 0 ? prev[prev.length - 1] : null;
-              const agentToUse = currentAgentName || (lastChunk ? lastChunk.agent : null);
-              
-              if (lastChunk && lastChunk.agent === agentToUse) {
-                const updated = [...prev];
-                updated[updated.length - 1] = { ...lastChunk, text: lastChunk.text + textChunk };
-                return updated;
-              } else {
-                return [...prev, { agent: agentToUse, text: textChunk }];
-              }
-            });
-          }
-        }
-        
-        // Trigger a fresh state pull whenever an Event finishes writing/updating a round
-        // We do this dynamically on checkpoints to keep frontend fully synched
-        if (output) {
-          fetchProjectState(projectId);
-        }
-        
+        processSSEEvent(rawData, projectId, () => eventSource.close());
       } catch (err) {
         console.error("Error parsing SSE frame:", err);
       }
@@ -276,27 +278,89 @@ export default function Home() {
     };
   };
 
-  // Submit Judge Directive Feedback
-  const handleSubmitDirective = async () => {
-    if (!activeProject || !judgeDirective.trim()) return;
-    setIsIntervening(true);
+  const startSSEResumeStream = (projectId: string) => {
+    if (sseRef.current) {
+      sseRef.current.close();
+    }
+    
+    setIsStreaming(true);
+    setPendingInput(null);
+    const eventSource = new EventSource(`${API_BASE}/api/projects/${projectId}/resume_stream`);
+    sseRef.current = eventSource;
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const rawData = JSON.parse(event.data);
+        processSSEEvent(rawData, projectId, () => eventSource.close());
+      } catch (err) {
+        console.error("Error parsing SSE frame:", err);
+      }
+    };
+    
+    eventSource.onerror = (err) => {
+      console.error("SSE Connection error, closing:", err);
+      setIsStreaming(false);
+      eventSource.close();
+    };
+  };
+
+  // Custom fetch-based streaming reader for the POST /resume endpoint
+  const handleResume = async (overrideAction?: string) => {
+    if (!activeProject || !pendingInput) return;
+    setIsResuming(true);
+    
+    const payloadText = overrideAction !== undefined ? overrideAction : resumeText;
     
     try {
-      const res = await fetch(`${API_BASE}/api/projects/${activeProject.project_id}/intervene`, {
+      const res = await fetch(`${API_BASE}/api/projects/${activeProject.project_id}/resume`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ directive: judgeDirective }),
+        body: JSON.stringify({ 
+          input_name: pendingInput.name,
+          user_response: payloadText 
+        }),
       });
       
-      if (res.ok) {
-        setJudgeDirective("");
-        // Instantly refresh state
-        await fetchProjectState(activeProject.project_id);
+      if (!res.ok) throw new Error("Resume failed");
+      
+      setPendingInput(null);
+      setResumeText("");
+      setIsResuming(false);
+      setIsStreaming(true);
+      
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            setIsStreaming(false);
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+          
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const dataStr = line.replace("data: ", "");
+                const rawData = JSON.parse(dataStr);
+                processSSEEvent(rawData, activeProject.project_id, () => {
+                   reader.cancel();
+                });
+              } catch (e) {
+                 // ignore partial parse error
+              }
+            }
+          }
+        }
       }
     } catch (err) {
-      console.error("Failed to inject directive:", err);
-    } finally {
-      setIsIntervening(false);
+      console.error("Failed to resume debate:", err);
+      setIsResuming(false);
     }
   };
 
@@ -318,75 +382,22 @@ export default function Home() {
       console.error("Error deleting project:", err);
     }
   };
-
-  // Force compilation of finalized blueprints
-  const handleForceSynthesis = async () => {
-    if (!activeProject) return;
-    setIsForcingSynthesis(true);
-    
-    try {
-      const res = await fetch(`${API_BASE}/api/projects/${activeProject.project_id}/force-synthesis`, {
-        method: "POST",
-      });
-      
-      if (res.ok) {
-        // Trigger rapid polling or trust that SSE completes
-        await fetchProjectState(activeProject.project_id);
-      }
-    } catch (err) {
-      console.error("Failed to trigger force-synthesis:", err);
-    } finally {
-      setIsForcingSynthesis(false);
-    }
-  };
-
   // Copy document markdown to clipboard
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
   // Helper to format scores
   const getScoreColor = (score: number) => {
     if (score >= 0.85) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/30";
     if (score >= 0.6) return "text-yellow-400 bg-yellow-500/10 border-yellow-500/30";
     return "text-rose-400 bg-rose-500/10 border-rose-500/30";
   };
-
   const getScoreBgBar = (score: number) => {
     if (score >= 0.85) return "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]";
     if (score >= 0.6) return "bg-yellow-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]";
     return "bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]";
-  };
-
-  // Simple custom Markdown to HTML-like parser
-  const renderSimpleMarkdown = (text: string) => {
-    if (!text) return null;
-    const lines = text.split("\n");
-    return lines.map((line, i) => {
-      // Headers
-      if (line.startsWith("### ")) {
-        return <h4 key={i} className="text-md font-bold text-indigo-300 mt-4 mb-2">{line.replace("### ", "")}</h4>;
-      }
-      if (line.startsWith("## ")) {
-        return <h3 key={i} className="text-lg font-bold text-indigo-400 mt-5 mb-3 border-b border-indigo-500/20 pb-1">{line.replace("## ", "")}</h3>;
-      }
-      if (line.startsWith("# ")) {
-        return <h2 key={i} className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-indigo-400 mt-6 mb-4">{line.replace("# ", "")}</h2>;
-      }
-      // Lists
-      if (line.startsWith("- ") || line.startsWith("* ")) {
-        return <li key={i} className="ml-5 list-disc text-slate-300 my-1">{line.substring(2)}</li>;
-      }
-      // Bold
-      let formattedLine: React.ReactNode = line;
-      if (line.includes("**")) {
-        const parts = line.split("**");
-        formattedLine = parts.map((part, idx) => idx % 2 === 1 ? <strong key={idx} className="text-indigo-200">{part}</strong> : part);
-      }
-      return <p key={i} className="text-slate-300 my-1 text-sm leading-relaxed min-h-[1rem]">{formattedLine}</p>;
-    });
   };
 
   // Clean-up connection on unmount
@@ -395,7 +406,6 @@ export default function Home() {
       if (sseRef.current) sseRef.current.close();
     };
   }, []);
-
   if (!isMounted) {
     return (
       <main className="min-h-screen bg-[#090a10] text-slate-100 flex items-center justify-center font-sans">
@@ -406,9 +416,8 @@ export default function Home() {
       </main>
     );
   }
-
   return (
-    <main className="min-h-screen bg-[#090a10] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(99,102,241,0.12),rgba(255,255,255,0))] text-slate-100 flex flex-col font-sans">
+    <main className="h-screen overflow-hidden bg-[#090a10] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(99,102,241,0.12),rgba(255,255,255,0))] text-slate-100 flex flex-col font-sans">
       
       {/* Top Premium Navbar */}
       <header className="border-b border-slate-800/60 bg-[#0d0e15]/70 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex justify-between items-center">
@@ -423,7 +432,6 @@ export default function Home() {
             <p className="text-xs text-slate-400">Multi-Agent Self-Correcting Software Architect Debate</p>
           </div>
         </div>
-
         {/* Streaming Status Indicator */}
         <div className="flex items-center gap-4">
           {activeProject && (
@@ -432,7 +440,6 @@ export default function Home() {
               ID: <span className="text-indigo-300 font-semibold">{activeProject.project_id}</span>
             </div>
           )}
-
           {isStreaming ? (
             <div className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 animate-spin" />
@@ -451,14 +458,12 @@ export default function Home() {
           )}
         </div>
       </header>
-
       {/* Main Grid Layout */}
-      <div className="flex-1 p-6 max-w-[1800px] w-full mx-auto h-[calc(100vh-85px)]">
+      <div className="flex-1 min-h-0 overflow-hidden p-6 max-w-[1800px] w-full mx-auto h-[calc(100vh-85px)]">
         <Group orientation="horizontal" className="h-full">
-
         
         {/* Left column - Setup & Project List (3 Cols) */}
-        <Panel defaultSize="25%" minSize="15%" maxSize="40%" className="flex flex-col gap-6 pr-3 overflow-y-auto">
+        <Panel defaultSize="25%" minSize="15%" maxSize="40%" className="flex flex-col gap-6 pr-3 min-h-0">
           
           {/* Section 1: Concept Launchpad */}
           <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl p-5 flex flex-col gap-4 shadow-xl backdrop-blur-sm">
@@ -487,14 +492,12 @@ export default function Home() {
                 <Play className="w-3.5 h-3.5" /> Start Architect Debate
               </button>
             </div>
-
             {streamError && (
               <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl flex items-start gap-2 text-xs">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>{streamError}</span>
               </div>
             )}
-
             {/* Quick-start Suggestions */}
             <div className="mt-2">
               <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 block mb-2">Suggestions</span>
@@ -514,7 +517,6 @@ export default function Home() {
               </div>
             </div>
           </div>
-
           {/* Section 2: Active Projects History */}
           <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl p-5 flex-1 flex flex-col gap-4 shadow-xl backdrop-blur-sm min-h-[200px]">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -529,19 +531,25 @@ export default function Home() {
                 </div>
               ) : (
                 projectsList.map((p, idx) => (
-                  <button
+                  <div
                     key={idx}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       if (!isStreaming) {
                         fetchProjectState(p.project_id);
                       }
                     }}
-                    disabled={isStreaming}
-                    className={`text-left p-3 rounded-xl border transition group relative ${
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !isStreaming) {
+                        fetchProjectState(p.project_id);
+                      }
+                    }}
+                    className={`text-left p-3 rounded-xl border transition group relative cursor-pointer ${
                       activeProject?.project_id === p.project_id
                         ? "bg-indigo-500/10 border-indigo-500/40"
                         : "bg-slate-900/30 border-slate-800/50 hover:bg-slate-800/30"
-                    }`}
+                    } ${isStreaming ? 'opacity-50 pointer-events-none' : ''}`}
                   >
                     <div className="flex justify-between items-center mb-1 pr-6">
                       <span className="text-[10px] font-mono font-bold text-indigo-400 uppercase tracking-tight">{p.project_id}</span>
@@ -558,17 +566,16 @@ export default function Home() {
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
-                  </button>
+                  </div>
                 ))
               )}
             </div>
           </div>
         </Panel>
         <Separator className="w-1.5 rounded-full bg-slate-800/50 hover:bg-indigo-500/50 transition-colors mx-1 cursor-col-resize" />
-
         {/* Center column - The Debate Arena Monitor (5 Cols) */}
-        <Panel defaultSize="45%" minSize="30%" className="flex flex-col gap-6 px-3">
-          <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl flex-1 flex flex-col shadow-xl backdrop-blur-sm overflow-hidden h-full">
+        <Panel defaultSize="45%" minSize="30%" className="flex flex-col gap-6 px-3 min-h-0">
+          <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl flex-1 min-h-0 flex flex-col shadow-xl backdrop-blur-sm overflow-hidden h-full">
             
             {/* Arena Header */}
             <div className="px-5 py-4 bg-slate-900/40 border-b border-slate-800/60 flex justify-between items-center">
@@ -585,7 +592,6 @@ export default function Home() {
                 </span>
               )}
             </div>
-
             {/* Arena Message Thread */}
             <div className="flex-1 overflow-y-auto p-5 space-y-4 flex-1">
               
@@ -608,38 +614,83 @@ export default function Home() {
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed font-semibold">&quot;{activeProject.concept}&quot;</p>
                   </div>
-
+                  {/* Render Grilling Chat History */}
+                  {activeProject.grill_history && activeProject.grill_history.length > 0 && (
+                    <div className="space-y-4 border-l-2 border-indigo-500/40 pl-4 ml-2 mb-6">
+                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest my-2 flex items-center gap-2">
+                        <Zap className="w-3 h-3" /> Initial Architect Interview
+                      </div>
+                      {activeProject.grill_history.map((msg, mIdx) => (
+                        <div key={mIdx} className={`p-4 rounded-xl border ${msg.role === "assistant" ? "bg-indigo-950/20 border-indigo-500/30" : "bg-slate-800/40 border-slate-700/50"}`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            {msg.role === "assistant" ? (
+                              <span className="text-[10px] font-bold text-indigo-400 uppercase flex items-center gap-1.5">
+                                <Activity className="w-3.5 h-3.5" /> Performance Architect
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5" /> Project Owner
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">{msg.content}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {/* Render Complete Debate Rounds from History */}
                   {activeProject.rounds_history.map((round, rIdx) => (
                     <div key={rIdx} className="space-y-4 border-l-2 border-indigo-500/20 pl-4 ml-2">
                       <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest my-2">Round {round.round_number} Transactions</div>
                       
                       {/* 1. Lead proposal draft */}
-                      <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4">
+                      <div className="bg-slate-900/60 border border-slate-800/80 border-l-4 border-l-emerald-500 rounded-xl p-4">
                         <div className="flex justify-between items-center mb-2.5">
                           <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
                             <Cpu className="w-3.5 h-3.5 text-emerald-400" /> Lead Architect (Performance & Scaling)
                           </span>
                           <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_2</span>
                         </div>
-                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-line leading-relaxed">
-                          {round.proposal_draft}
+                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{round.proposal_draft}</ReactMarkdown>
                         </div>
                       </div>
-
                       {/* 2. Critics response */}
-                      <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4">
-                        <div className="flex justify-between items-center mb-2.5">
-                          <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5 text-rose-400" /> Parallel Critics (Security & DevOps)
-                          </span>
-                          <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_3A_3B</span>
-                        </div>
-                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-line leading-relaxed">
-                          {round.critique}
-                        </div>
-                      </div>
-
+                      {(() => {
+                        const critiqueText = round.critique || "";
+                        const hasDevopsSplit = critiqueText.includes("--- DEVOPS CRITIQUE ---");
+                        const parts = hasDevopsSplit ? critiqueText.split("--- DEVOPS CRITIQUE ---") : [critiqueText];
+                        const securityPart = parts[0];
+                        const devopsPart = parts.length > 1 ? "--- DEVOPS CRITIQUE ---\n" + parts[1] : null;
+                        return (
+                          <div className="flex flex-col gap-4">
+                            <div className="bg-slate-900/60 border border-slate-800/80 border-l-4 border-l-rose-500 rounded-xl p-4">
+                              <div className="flex justify-between items-center mb-2.5">
+                                <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                                  <Shield className="w-3.5 h-3.5 text-rose-400" /> Security & Resilience Auditor
+                                </span>
+                                <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_3A</span>
+                              </div>
+                              <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{securityPart}</ReactMarkdown>
+                              </div>
+                            </div>
+                            {devopsPart && (
+                              <div className="bg-slate-900/60 border border-slate-800/80 border-l-4 border-l-cyan-500 rounded-xl p-4">
+                                <div className="flex justify-between items-center mb-2.5">
+                                  <span className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                                    <Layers className="w-3.5 h-3.5 text-cyan-400" /> DevOps & Maintainability Lead
+                                  </span>
+                                  <span className="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">NODE_3B</span>
+                                </div>
+                                <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{devopsPart}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* 3. Judge evaluation */}
                       <div className="bg-[#121021] border border-violet-500/10 rounded-xl p-4">
                         <div className="flex justify-between items-center mb-2.5">
@@ -671,7 +722,6 @@ export default function Home() {
                       </div>
                     </div>
                   ))}
-
                   {/* Render Live Incremental Stream Output (If Speaking) */}
                   {isStreaming && liveStreams.map((chunk, idx) => {
                     let borderColor = "border-indigo-500";
@@ -705,7 +755,6 @@ export default function Home() {
                       pulseColor = "bg-violet-400";
                       borderLeft = "border-l-violet-500";
                     }
-
                     return (
                       <div key={idx} className={`${bgColor} border ${borderColor}/30 rounded-xl p-4 animate-fade-in pl-4 border-l-4 ${borderLeft}`}>
                         <div className="flex justify-between items-center mb-2.5">
@@ -714,8 +763,8 @@ export default function Home() {
                           </span>
                           <span className={`text-[9px] ${bgColor} ${textColor} px-2 py-0.5 rounded font-mono`}>STREAM_LIVE</span>
                         </div>
-                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-line leading-relaxed font-mono">
-                          {chunk.text}
+                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed font-mono prose prose-invert prose-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{chunk.text}</ReactMarkdown>
                           {idx === liveStreams.length - 1 && (
                             <span className={`inline-block w-1.5 h-3 ${pulseColor} ml-0.5 animate-pulse`}></span>
                           )}
@@ -723,68 +772,96 @@ export default function Home() {
                       </div>
                     );
                   })}
-
                   <div ref={streamEndRef} />
                 </div>
               )}
             </div>
-
-            {/* Bottom Panel: Interactive Judge Directive Injection & Force Synthesis */}
+            {/* Bottom Panel: Dynamic RequestInput Handler */}
             {activeProject && (
-              <div className="p-4 bg-slate-900/40 border-t border-slate-800/60 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" /> Presiding Judge Command Console
-                  </span>
-                  
-                  {/* Force Synthesis trigger */}
-                  <button
-                    onClick={handleForceSynthesis}
-                    disabled={isStreaming || isForcingSynthesis || activeProject.rounds_history.length === 0}
-                    className="text-[10px] px-2.5 py-1 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-400 disabled:text-slate-600 disabled:bg-slate-900/40 disabled:border-slate-800 disabled:cursor-not-allowed rounded transition font-bold"
-                  >
-                    {isForcingSynthesis ? "Triggering..." : "Force Compilation"}
-                  </button>
-                </div>
-                
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={judgeDirective}
-                    onChange={(e) => setJudgeDirective(e.target.value)}
-                    placeholder="Type an architectural constraint directive (e.g. You must implement Redis Caching...)"
-                    className="flex-1 text-xs bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 rounded-xl px-3 py-2 text-slate-100 placeholder:text-slate-600 outline-none transition"
-                    disabled={isIntervening}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSubmitDirective();
-                    }}
-                  />
-                  <button
-                    onClick={handleSubmitDirective}
-                    disabled={isIntervening || !judgeDirective.trim()}
-                    className="p-2 bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-600 rounded-xl transition"
-                  >
-                    <Send className="w-4 h-4 text-white" />
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-500 leading-normal">
-                  Injecting a directive inserts feedback into the thread. The agents will automatically pivot on the next turn to address it.
-                </p>
+              <div className="p-4 bg-slate-900/40 border-t border-slate-800/60 flex flex-col gap-3 min-h-[100px] justify-center">
+                {pendingInput ? (
+                  <div className="flex flex-col gap-2 animate-fade-in">
+                    <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5" /> Action Required: {pendingInput.name}
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">{pendingInput.description}</p>
+                    <div className="flex gap-2 mt-1">
+                      <input
+                        type="text"
+                        value={resumeText}
+                        onChange={(e) => setResumeText(e.target.value)}
+                        placeholder="Type your response or directive..."
+                        className="flex-1 text-xs bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 rounded-xl px-3 py-2 text-slate-100 placeholder:text-slate-600 outline-none transition"
+                        disabled={isResuming}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && resumeText.trim()) handleResume();
+                        }}
+                      />
+                      <button
+                        onClick={() => handleResume()}
+                        disabled={isResuming || !resumeText.trim()}
+                        className="px-4 py-2 bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 rounded-xl font-bold text-xs transition flex items-center justify-center min-w-[70px]"
+                      >
+                        {isResuming ? <Activity className="w-4 h-4 animate-spin" /> : "Send"}
+                      </button>
+                      
+                      {pendingInput.name === "judge_review" && (
+                        <>
+                          <button 
+                            onClick={() => handleResume("CONTINUE")} 
+                            disabled={isResuming}
+                            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-xl font-bold text-xs transition text-white"
+                          >
+                            Continue Debate
+                          </button>
+                          <button 
+                            onClick={() => handleResume("SYNTHESIZE")} 
+                            disabled={isResuming}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-xl font-bold text-xs transition text-white shadow-[0_0_10px_rgba(16,185,129,0.3)]"
+                          >
+                            Synthesize Assets
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center text-center w-full h-full">
+                    {isStreaming ? (
+                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2 animate-pulse">
+                        <Activity className="w-3.5 h-3.5" /> Graph Executing...
+                      </span>
+                    ) : (
+                      <div className="flex flex-col items-center gap-4">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                          Awaiting Next Round
+                        </span>
+                        {!activeProject.consensus_achieved && (
+                          <button
+                            onClick={() => startSSEResumeStream(activeProject.project_id)}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-xs transition text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]"
+                          >
+                            <Play className="w-4 h-4" />
+                            Resume Debate Session
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </Panel>
         <Separator className="w-1.5 rounded-full bg-slate-800/50 hover:bg-indigo-500/50 transition-colors mx-1 cursor-col-resize" />
-
         {/* Right column - Consensus, Scores, and Document Synthesizer (4 Cols) */}
-        <Panel defaultSize="30%" minSize="20%" maxSize="50%" className="flex flex-col gap-6 pl-3 overflow-y-auto">
+        <Panel defaultSize="30%" minSize="20%" maxSize="50%" className="flex flex-col gap-6 pl-3 min-h-0">
           
           {/* 6-Pillar Metric Gauge */}
           <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl p-5 flex flex-col gap-5 shadow-xl backdrop-blur-sm">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <Activity className="w-4 h-4 text-indigo-400" /> Consensus Dashboard
             </h2>
-
             {!activeProject || activeProject.rounds_history.length === 0 ? (
               <div className="text-center p-6 bg-slate-900/30 border border-slate-800/50 rounded-xl flex flex-col items-center justify-center">
                 <AlertCircle className="w-8 h-8 text-slate-600 mb-2" />
@@ -825,7 +902,6 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-3">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pillar Metrics (Threshold ≥ 0.85)</span>
                   
@@ -858,13 +934,11 @@ export default function Home() {
               </div>
             )}
           </div>
-
           {/* synthesized Document compilation panel */}
           <div className="bg-[#0d0e15]/80 border border-slate-800/80 rounded-2xl p-5 flex-1 flex flex-col gap-4 shadow-xl backdrop-blur-sm min-h-[250px]">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <FileText className="w-4 h-4 text-indigo-400" /> Compiled Blueprints
             </h2>
-
             {!activeProject || (!activeProject.final_prd && !activeProject.final_architecture) ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-6 border border-dashed border-slate-800 rounded-xl">
                 <FileText className="w-10 h-10 text-slate-700 mb-2 animate-pulse" />
@@ -899,9 +973,8 @@ export default function Home() {
                     System Architecture
                   </button>
                 </div>
-
                 {/* Display active doc contents safely */}
-                <div className="flex-1 bg-slate-950/70 border border-slate-900 rounded-xl p-4 overflow-y-auto max-h-[300px] relative">
+                <div className="flex-1 bg-slate-950/70 border border-slate-900 rounded-xl p-4 overflow-y-auto relative">
                   
                   {/* Copy Button */}
                   <button
@@ -910,14 +983,12 @@ export default function Home() {
                   >
                     {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Clipboard className="w-3.5 h-3.5" />}
                   </button>
-
-                  <div className="space-y-4">
+                  <div className="space-y-4 prose prose-invert prose-sm max-w-none">
                     {activeDocTab === "prd"
-                      ? renderSimpleMarkdown(activeProject.final_prd || "")
-                      : renderSimpleMarkdown(activeProject.final_architecture || "")}
+                      ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{activeProject.final_prd || ""}</ReactMarkdown>
+                      : <ReactMarkdown remarkPlugins={[remarkGfm]}>{activeProject.final_architecture || ""}</ReactMarkdown>}
                   </div>
                 </div>
-
                 {/* Path indicator */}
                 <div className="text-[10px] font-mono text-slate-500 bg-slate-950/40 p-2 border border-slate-900 rounded-lg flex items-center justify-between">
                   <span>File Target:</span>
