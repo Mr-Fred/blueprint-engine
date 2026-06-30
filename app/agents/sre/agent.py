@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    location = "us-central1" if use_vertex else None
+    location = settings.location if use_vertex else None
     return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
 
 @node
@@ -71,4 +71,4 @@ async def sre_agent_node(ctx: Context, node_input: str):
                 critique_text += text
                 yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
-    yield Event(output=critique_text, state=ctx.state.to_dict())
+    yield Event(output=critique_text, custom_metadata={"state": ctx.state.to_dict()})

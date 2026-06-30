@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    location = "us-central1" if use_vertex else None
+    location = settings.location if use_vertex else None
     return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
 
 from google.adk.events.request_input import RequestInput
@@ -30,7 +30,7 @@ async def grill_node(ctx: Context, node_input: Any):
     previous_interaction_id = ctx.state.get("temp:grill_interaction_id")
     
     question_count = ctx.state.get("temp:grill_question_count", 0)
-    max_questions = 10
+    max_questions = 5
     
     # Maintain a log for the UI to render the chat history
     grill_history = ctx.state.get("grill_history", [])
@@ -50,10 +50,23 @@ async def grill_node(ctx: Context, node_input: Any):
 
     if isinstance(node_input, dict) and "grill_question" in node_input:
         user_answer = str(node_input["grill_question"])
+        
+        if user_answer.strip() == "SKIP_INTERVIEW":
+            grill_history.append({"role": "assistant", "content": "Interview manually skipped. Proceeding to architectural debate."})
+            ctx.state["grill_history"] = grill_history
+            yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
+            return
+            
         question_count += 1
         ctx.state["temp:grill_question_count"] = question_count
         grill_history.append({"role": "user", "content": user_answer})
         ctx.state["grill_history"] = grill_history
+        
+        if question_count >= max_questions:
+            grill_history.append({"role": "assistant", "content": "I have all the context I need. Proceeding to architectural debate."})
+            ctx.state["grill_history"] = grill_history
+            yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
+            return
 
     if not previous_interaction_id:
         prompt = f"""
@@ -112,12 +125,12 @@ async def grill_node(ctx: Context, node_input: Any):
     ctx.state["grill_history"] = grill_history
     
     if text == "READY":
-        yield Event(output=concept, route="ready", state=ctx.state.to_dict())
+        yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
         return
         
     yield Event(
         content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
-        state=ctx.state.to_dict()
+        custom_metadata={"state": ctx.state.to_dict()}
     )
     
     # Pause the graph and ask the user
@@ -127,7 +140,7 @@ async def grill_node(ctx: Context, node_input: Any):
     )
     
     # Route back to itself so the resumed graph executes this node again with the user's answer
-    yield Event(output="Waiting for user", route="ask_user", state=ctx.state.to_dict())
+    yield Event(output="Waiting for user", route="ask_user", custom_metadata={"state": ctx.state.to_dict()})
     return
 
 @node
@@ -190,4 +203,4 @@ async def performance_agent_node(ctx: Context, node_input: str):
                 yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
     ctx.state["latest_proposal"] = proposal_text
-    yield Event(output=proposal_text, state=ctx.state.to_dict())
+    yield Event(output=proposal_text, custom_metadata={"state": ctx.state.to_dict()})

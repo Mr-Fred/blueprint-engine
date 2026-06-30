@@ -31,7 +31,7 @@ from app.agents.performance.agent import grill_node
 def get_genai_client() -> genai.Client:
     # ADK uses Vertex AI by default, falling back to Gemini API
     use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    location = "us-central1" if use_vertex else None
+    location = settings.location if use_vertex else None
     return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
 
 @node
@@ -54,7 +54,7 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
     
     # Check if we are resuming an existing restored state
     if ctx.state.get("current_round", 0) > 0:
-        return Event(output=ctx.state.get("concept"), state=ctx.state.to_dict())
+        return Event(output=ctx.state.get("concept"), custom_metadata={"state": ctx.state.to_dict()})
     
     # Store initial concept and project_id in the workflow state
     ctx.state["project_id"] = project_id
@@ -63,7 +63,7 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
     ctx.state["rounds_history"] = []
     ctx.state["consensus_achieved"] = False
     
-    return Event(output=concept, state=ctx.state.to_dict())
+    return Event(output=concept, custom_metadata={"state": ctx.state.to_dict()})
 
 # Join Node to combine Security and DevOps critiques
 join_critiques = JoinNode(name="merge_critiques")
@@ -91,7 +91,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         user_choice = str(node_input["judge_review"]).strip()
         if user_choice.upper() == "SYNTHESIZE":
             ctx.state["consensus_achieved"] = True
-            yield Event(output=ctx.state.to_dict(), route="synthesize", state=ctx.state.to_dict())
+            yield Event(output=ctx.state.to_dict(), route="synthesize", custom_metadata={"state": ctx.state.to_dict()})
             return
         elif user_choice.upper() == "CONTINUE" or not user_choice:
             pass # Just continue the loop normally
@@ -100,7 +100,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
             
         proposal = ctx.state.get("latest_proposal", "")
         ctx.state["temp:latest_proposal"] = proposal
-        yield Event(output=proposal, route="continue", state=ctx.state.to_dict())
+        yield Event(output=proposal, route="continue", custom_metadata={"state": ctx.state.to_dict()})
         return
 
     client = get_genai_client()
@@ -132,7 +132,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         response = await client.aio.interactions.create(
             model=settings.model_id,
             input=prompt,
-            response_format=ScoreResult
+            response_format=ScoreResult.model_json_schema()
         )
         if response.steps and response.steps[-1].content:
             text_content = response.steps[-1].content[0].text
@@ -192,7 +192,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
     
     if consensus or current_round >= settings.max_rounds:
         ctx.state["consensus_achieved"] = True
-        yield Event(output=ctx.state.to_dict(), route="synthesize", state=ctx.state.to_dict())
+        yield Event(output=ctx.state.to_dict(), route="synthesize", custom_metadata={"state": ctx.state.to_dict()})
         return
     
     # Save the proposal in state so the next iteration can read it if resumed
@@ -210,7 +210,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         message=message_text
     )
     
-    yield Event(output="Waiting for judge review", route="review", state=ctx.state.to_dict())
+    yield Event(output="Waiting for judge review", route="review", custom_metadata={"state": ctx.state.to_dict()})
     return
 
 @node
@@ -275,7 +275,7 @@ async def synthesis_node(ctx: Context, node_input: dict) -> Event:
     state_dump = ctx.state.to_dict()
     FilesystemJail.write_project_file(project_id, "state.json", json.dumps(state_dump, indent=2))
 
-    return Event(output=ctx.state.to_dict(), state=ctx.state.to_dict())
+    return Event(output=ctx.state.to_dict(), custom_metadata={"state": ctx.state.to_dict()})
 
 # Stitching the complete ADK 2.0 Workflow
 root_agent = Workflow(

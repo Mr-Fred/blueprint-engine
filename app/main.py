@@ -41,7 +41,8 @@ GLOBAL_SESSION_SERVICE = DatabaseSessionService(db_url="sqlite+aiosqlite:///.age
 def sync_debate_state_from_event(project_id: str, event: Any):
     """Helper to maintain separation of concerns: updates global state from emitted ADK events."""
     event_dict = event.model_dump() if hasattr(event, "model_dump") else getattr(event, "__dict__", {})
-    state_update = event_dict.get("state")
+    custom_meta = event_dict.get("custom_metadata") or {}
+    state_update = custom_meta.get("state")
     
     if state_update and isinstance(state_update, dict) and project_id in DEBATE_SESSIONS:
         current_round = state_update.get("current_round", 1)

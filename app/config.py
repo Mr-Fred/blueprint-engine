@@ -8,7 +8,7 @@ class AppConfig(BaseModel):
     location: str = Field(default="global")
     use_vertex_ai: bool = Field(default=True)
     developer_knowledge_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"))
-    model_id: str = Field(default="gemini-2.5-pro")
+    model_id: str = Field(default="gemini-3-flash-preview")
     gate_threshold: float = Field(default=0.85)
     max_rounds: int = Field(default=10)
 
@@ -24,13 +24,15 @@ class AppConfig(BaseModel):
                 # Fallback gracefully or log
                 pass
         
+        os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+        
         # Instantiate and validate Pydantic fields
         config = cls(
             project_id=os.getenv("GOOGLE_CLOUD_PROJECT", ""),
-            location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            location="global",
             use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"],
             developer_knowledge_api_key=os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"),
-            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-2.5-pro"),
+            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-3-flash-preview"),
             gate_threshold=float(os.getenv("DEBATE_GATE_THRESHOLD", "0.85")),
             max_rounds=int(os.getenv("DEBATE_MAX_ROUNDS", "10")),
         )
