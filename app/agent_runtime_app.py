@@ -24,6 +24,7 @@ from vertexai.agent_engines.templates.adk import AdkApp
 from app.agent import app as adk_app
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
+from app.config import settings
 
 # Load environment variables from .env file at runtime
 load_dotenv()
@@ -32,9 +33,12 @@ load_dotenv()
 class AgentEngineApp(AdkApp):
     def set_up(self) -> None:
         """Initialize the agent engine app with logging and telemetry."""
-        vertexai.init()
+        if settings.use_vertex_ai:
+            vertexai.init(project=settings.project_id, location=settings.location)
         setup_telemetry()
         super().set_up()
+        if not settings.use_vertex_ai:
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
         logging.basicConfig(level=logging.INFO)
         logging_client = google_cloud_logging.Client()
         self.logger = logging_client.logger(__name__)

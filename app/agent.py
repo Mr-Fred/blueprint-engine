@@ -29,10 +29,8 @@ from app.agents.performance.agent import grill_node
 
 # Initialize Google Gen AI Client
 def get_genai_client() -> genai.Client:
-    # ADK uses Vertex AI by default, falling back to Gemini API
-    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    location = settings.location if use_vertex else None
-    return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
+    """Creates a Google GenAI Client configured for either Vertex AI or standard Gemini API."""
+    return settings.get_genai_client()
 
 @node
 def initialize_debate(ctx: Context, node_input: Any) -> Event:

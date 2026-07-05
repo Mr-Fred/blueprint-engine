@@ -1,20 +1,34 @@
 import os
 import google.auth
+from google import genai
 from pydantic import BaseModel, Field
 from typing import Optional
+from dotenv import load_dotenv
 
 class AppConfig(BaseModel):
     project_id: str = Field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_PROJECT", ""))
     location: str = Field(default="global")
-    use_vertex_ai: bool = Field(default=True)
+    use_vertex_ai: bool = Field(default=False)
     developer_knowledge_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"))
     model_id: str = Field(default="gemini-3-flash-preview")
     gate_threshold: float = Field(default=0.85)
     max_rounds: int = Field(default=10)
 
+    def get_genai_client(self) -> genai.Client:
+        """Creates a Google GenAI Client configured for either Vertex AI or standard Gemini API."""
+        if self.use_vertex_ai:
+            return genai.Client(vertexai=True, project=self.project_id, location=self.location)
+        return genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
+
     @classmethod
     def load_and_validate(cls) -> "AppConfig":
         """Loads configuration from environment variables and validates it, failing fast."""
+        # Ensure environment variables are loaded from root and frontend .env files
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        load_dotenv(os.path.join(root_dir, ".env"))
+        load_dotenv(os.path.join(root_dir, "frontend", ".env"))
+        load_dotenv()
+
         # Auto-detect GCP project if not set
         if not os.getenv("GOOGLE_CLOUD_PROJECT"):
             try:
@@ -30,17 +44,22 @@ class AppConfig(BaseModel):
         config = cls(
             project_id=os.getenv("GOOGLE_CLOUD_PROJECT", ""),
             location="global",
-            use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"],
+            use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "False").lower() in ["true", "1"],
             developer_knowledge_api_key=os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"),
             model_id=os.getenv("DEBATE_MODEL_ID", "gemini-3-flash-preview"),
             gate_threshold=float(os.getenv("DEBATE_GATE_THRESHOLD", "0.85")),
             max_rounds=int(os.getenv("DEBATE_MAX_ROUNDS", "10")),
         )
         
-        if not config.project_id:
+        if config.use_vertex_ai and not config.project_id:
             raise ValueError(
                 "GOOGLE_CLOUD_PROJECT environment variable is missing and could not be auto-detected. "
                 "Please configure your Google Cloud credentials or set GOOGLE_CLOUD_PROJECT."
+            )
+        elif not config.use_vertex_ai and not os.getenv("GEMINI_API_KEY"):
+            raise ValueError(
+                "GEMINI_API_KEY environment variable is missing. "
+                "When not using Vertex AI, please provide a valid GEMINI_API_KEY in your .env file."
             )
             
         return config

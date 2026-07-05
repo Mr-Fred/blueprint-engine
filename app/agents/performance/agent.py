@@ -14,9 +14,7 @@ logger = logging.getLogger(__name__)
 
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
-    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True").lower() in ["true", "1"]
-    location = settings.location if use_vertex else None
-    return genai.Client(enterprise=use_vertex, project=settings.project_id, location=location)
+    return settings.get_genai_client()
 
 from google.adk.events.request_input import RequestInput
 from typing import Any
