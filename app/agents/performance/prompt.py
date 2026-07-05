@@ -1,10 +1,11 @@
 import pathlib
 
-def get_performance_prompt(concept: str, current_round: int, history: list, judge_directive: str = None) -> str:
+
+def get_performance_prompt(concept: str, current_round: int, history: list, judge_directive: str = None, skills_context: str = None) -> str:
     """Constructs the prompt for the Lead Performance & Scaling Architect by dynamically loading guidelines from AGENT.md."""
     agent_dir = pathlib.Path(__file__).parent
     agent_md_path = agent_dir / "AGENT.md"
-    
+
     if agent_md_path.exists():
         guidelines = agent_md_path.read_text(encoding="utf-8")
     else:
@@ -25,6 +26,9 @@ Current Round: {current_round}"""
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize addressing this judge feedback in your refined design proposal with highest precedence."
+
+    if skills_context:
+        prompt += f"\n\n--- DOMAIN SKILLS & ARCHITECTURAL PATTERNS ---\nUse the following loaded skills and design paradigms to formulate a scalable, robust architecture:\n{skills_context}"
 
     prompt += "\n\nProvide your detailed architectural proposal focusing on: Paradigm (OOP/FP), Data storage, API contracts, scaling limits, and throughput."
     return prompt

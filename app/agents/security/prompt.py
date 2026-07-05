@@ -1,6 +1,6 @@
 import pathlib
 
-def get_security_prompt(proposal: str, judge_directive: str = None) -> str:
+def get_security_prompt(proposal: str, judge_directive: str = None, skills_context: str = None) -> str:
     """Constructs the prompt for the Security & Resilience Auditor by dynamically loading guidelines from AGENT.md."""
     agent_dir = pathlib.Path(__file__).parent
     agent_md_path = agent_dir / "AGENT.md"
@@ -25,5 +25,8 @@ Provide your security review focusing STRICTLY on:
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize auditing the proposal's compliance with this judge feedback."
+
+    if skills_context:
+        prompt += f"\n\n--- DOMAIN SKILLS & MITIGATION PATTERNS ---\nUse the following loaded skills to formulate concrete mitigation plans for any identified vulnerabilities:\n{skills_context}"
 
     return prompt

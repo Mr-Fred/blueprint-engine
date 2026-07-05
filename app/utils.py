@@ -63,3 +63,62 @@ class FilesystemJail:
         project_dir = cls.get_project_dir(project_id)
         if project_dir.exists() and project_dir.is_dir():
             shutil.rmtree(project_dir)
+
+def load_matching_skills(skills_dir: Path, text_to_match: str) -> str:
+    """Scans a skills directory for Markdown files, matches YAML frontmatter metadata
+
+    against the provided text, and returns a formatted string of matching skills.
+    Adheres to JIT skill injection without polluting global context.
+    """
+    if not skills_dir.exists() or not skills_dir.is_dir() or not text_to_match:
+        return ""
+
+    import re
+    matched_skills = []
+    text_lower = text_to_match.lower()
+    
+    # Common stop words to ignore during token matching
+    stop_words = {
+        "and", "for", "the", "with", "from", "this", "that", "use", "when", "how",
+        "are", "can", "will", "best", "practices", "patterns", "design", "guide",
+        "about", "into", "over", "under", "where", "what", "which", "while", "skill"
+    }
+
+    for file_path in sorted(skills_dir.rglob("*.md")):
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        # Extract YAML frontmatter if present using PyYAML
+        frontmatter_text = ""
+        skill_name = file_path.parent.name if file_path.stem.lower() == "skill" else file_path.stem
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    import yaml
+                    meta = yaml.safe_load(parts[1]) or {}
+                    if isinstance(meta, dict):
+                        skill_name = str(meta.get("name", skill_name)).strip()
+                        frontmatter_text = f"{skill_name} {meta.get('description', '')} {meta.get('keywords', '')}".lower()
+                except Exception:
+                    frontmatter_text = parts[1].lower()
+        else:
+            frontmatter_text = content[:500].lower() # fallback to first 500 chars
+
+        # Extract meaningful tokens from skill name and frontmatter description
+        raw_tokens = re.findall(r'[a-z0-9]+', f"{skill_name} {frontmatter_text}")
+        tokens = {t for t in raw_tokens if len(t) >= 3 and t not in stop_words}
+
+        # Check if skill name phrase or any significant token appears in text_to_match
+        name_phrase = skill_name.lower().replace("-", " ").replace("_", " ")
+        is_match = name_phrase in text_lower or any(
+            re.search(r'\b' + re.escape(token) + r'\b', text_lower) for token in tokens
+        )
+
+        if is_match:
+            matched_skills.append(f"\n--- SKILL: {skill_name} ---\n{content.strip()}\n")
+
+    return "\n".join(matched_skills)
+

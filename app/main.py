@@ -77,6 +77,7 @@ def sync_debate_state_from_event(project_id: str, event: Any):
 
 class ProjectCreateRequest(BaseModel):
     concept: str = Field(..., description="The software concept or idea to debate")
+    caveman_mode: bool = Field(default=True, description="Whether to enable ultra-compressed caveman communication mode by default")
 
 class ProjectCreateResponse(BaseModel):
     project_id: str
@@ -96,6 +97,7 @@ async def create_project(req: ProjectCreateRequest):
         new_state = DebateState(
             project_id=project_id,
             concept=req.concept,
+            caveman_mode=req.caveman_mode,
         )
         DEBATE_SESSIONS[project_id] = new_state
         
@@ -234,7 +236,8 @@ async def stream_debate(project_id: str):
         
         initial_input = {
             "project_id": project_id,
-            "concept": session_state.concept
+            "concept": session_state.concept,
+            "caveman_mode": session_state.caveman_mode
         }
         
         message = types.Content(
@@ -456,5 +459,25 @@ async def get_project_state(project_id: str):
     ensure_project_loaded(project_id)
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
+        
+    return DEBATE_SESSIONS[project_id]
+
+class ToggleCavemanRequest(BaseModel):
+    caveman_mode: bool = Field(..., description="The desired boolean state for caveman mode")
+
+@app.post("/api/projects/{project_id}/toggle-caveman", response_model=DebateState)
+async def toggle_caveman_mode(project_id: str, req: ToggleCavemanRequest):
+    """
+    POST /api/projects/{project_id}/toggle-caveman: Dynamically toggles caveman mode during an ongoing debate.
+    """
+    ensure_project_loaded(project_id)
+    if project_id not in DEBATE_SESSIONS:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    DEBATE_SESSIONS[project_id].caveman_mode = req.caveman_mode
+    try:
+        FilesystemJail.write_project_file(project_id, "state.json", DEBATE_SESSIONS[project_id].model_dump_json())
+    except Exception as e:
+        logger.error(f"Failed to persist state during caveman toggle: {e}")
         
     return DEBATE_SESSIONS[project_id]

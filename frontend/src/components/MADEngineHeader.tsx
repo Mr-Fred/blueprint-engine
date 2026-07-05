@@ -1,9 +1,9 @@
 import React from "react";
-import { Cpu, Activity, CheckCircle } from "lucide-react";
+import { Cpu, Activity, CheckCircle, Zap } from "lucide-react";
 import { useMADEngine } from "../context/MADEngineContext";
 
 export function MADEngineHeader() {
-  const { activeProject, isStreaming } = useMADEngine();
+  const { activeProject, isStreaming, cavemanMode, toggleCavemanMode } = useMADEngine();
 
   return (
     <header className="border-b border-slate-800/60 bg-[#0d0e15]/70 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex justify-between items-center">
@@ -19,8 +19,22 @@ export function MADEngineHeader() {
         </div>
       </div>
       
-      {/* Streaming Status Indicator */}
+      {/* Streaming Status & Caveman Toggle Indicator */}
       <div className="flex items-center gap-4">
+        {/* Caveman Mode Toggle */}
+        <button
+          onClick={() => toggleCavemanMode()}
+          className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-2 border transition-all cursor-pointer ${
+            cavemanMode
+              ? "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+              : "bg-slate-800/40 border-slate-700/50 text-slate-400 hover:bg-slate-800/60"
+          }`}
+          title="Toggle Caveman Mode (concise responses, ~75% token saving)"
+        >
+          <Zap className={`w-3.5 h-3.5 ${cavemanMode ? "fill-amber-400 text-amber-400 animate-pulse" : "text-slate-500"}`} />
+          <span>CAVEMAN MODE: {cavemanMode ? "ON" : "OFF"}</span>
+        </button>
+
         {activeProject ? (
           <div className="text-xs font-mono text-slate-400 bg-slate-800/40 border border-slate-700/50 px-3 py-1.5 rounded-lg flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,1)]"></span>

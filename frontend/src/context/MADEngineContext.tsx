@@ -13,6 +13,8 @@ interface MADEngineContextValue {
   projectsList: ProjectInfo[];
   setProjectsList: React.Dispatch<React.SetStateAction<ProjectInfo[]>>;
   isMounted: boolean;
+  cavemanMode: boolean;
+  setCavemanMode: React.Dispatch<React.SetStateAction<boolean>>;
   
   // From useDebateStream
   isStreaming: boolean;
@@ -31,6 +33,7 @@ interface MADEngineContextValue {
   handleDeleteProject: (projectId: string, e: React.MouseEvent) => Promise<void>;
   fetchProjectState: (projectId: string) => Promise<void>;
   startSSEResumeStream: (projectId: string) => void;
+  toggleCavemanMode: (newMode?: boolean) => Promise<void>;
 }
 
 const MADEngineContext = createContext<MADEngineContextValue | undefined>(undefined);
@@ -41,6 +44,7 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
   const [projectsList, setProjectsList] = useState<ProjectInfo[]>([]);
   const [isMounted, setIsMounted] = useState(false);
   const [liveRound, setLiveRound] = useState<number>(1);
+  const [cavemanMode, setCavemanMode] = useState<boolean>(true);
 
   useEffect(() => {
     const timer = setTimeout(() => setIsMounted(true), 0);
@@ -53,6 +57,9 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data: DebateState = await res.json();
         setActiveProject(data);
+        if (data.caveman_mode !== undefined) {
+          setCavemanMode(data.caveman_mode);
+        }
       }
     } catch (err) {
       console.error("Error fetching project state:", err);
@@ -75,7 +82,12 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     setLiveStreams,
     setLiveAgent
   } = useDebateStream({
-    onStateUpdate: setActiveProject,
+    onStateUpdate: (state) => {
+      setActiveProject(state);
+      if (state?.caveman_mode !== undefined) {
+        setCavemanMode(state.caveman_mode);
+      }
+    },
     onFetchState: fetchProjectState
   });
 
@@ -94,6 +106,26 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     fetchProjects();
   }, []);
 
+  const toggleCavemanMode = useCallback(async (newMode?: boolean) => {
+    const targetMode = newMode !== undefined ? newMode : !cavemanMode;
+    setCavemanMode(targetMode);
+    if (activeProject) {
+      try {
+        const res = await fetch(`${API_BASE}/api/projects/${activeProject.project_id}/toggle-caveman`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ caveman_mode: targetMode }),
+        });
+        if (res.ok) {
+          const updatedState: DebateState = await res.json();
+          setActiveProject(updatedState);
+        }
+      } catch (err) {
+        console.error("Failed to toggle caveman mode:", err);
+      }
+    }
+  }, [cavemanMode, activeProject]);
+
   const handleStartDebate = useCallback(async (conceptText: string) => {
     if (!conceptText.trim()) return;
     setStreamError(null);
@@ -104,7 +136,7 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`${API_BASE}/api/projects`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ concept: conceptText }),
+        body: JSON.stringify({ concept: conceptText, caveman_mode: cavemanMode }),
       });
       
       if (!res.ok) throw new Error("Failed to initialize project on backend.");
@@ -126,7 +158,8 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
         grill_history: [],
         consensus_achieved: false,
         final_prd: null,
-        final_architecture: null
+        final_architecture: null,
+        caveman_mode: cavemanMode
       };
       setActiveProject(initialStoreState);
       
@@ -135,7 +168,7 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
       const errMsg = err instanceof Error ? err.message : "Something went wrong.";
       setStreamError(errMsg);
     }
-  }, [setStreamError, setLiveStreams, setLiveAgent, startSSEStream]);
+  }, [cavemanMode, setStreamError, setLiveStreams, setLiveAgent, startSSEStream]);
 
   const handleDeleteProject = useCallback(async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -168,6 +201,8 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     projectsList,
     setProjectsList,
     isMounted,
+    cavemanMode,
+    setCavemanMode,
     liveRound,
     isStreaming,
     streamError,
@@ -181,12 +216,13 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     handleResume: handleResumeContext,
     handleDeleteProject,
     fetchProjectState,
-    startSSEResumeStream
+    startSSEResumeStream,
+    toggleCavemanMode
   }), [
-    conceptInput, activeProject, projectsList, isMounted, liveRound, 
+    conceptInput, activeProject, projectsList, isMounted, cavemanMode, liveRound, 
     isStreaming, streamError, liveAgent, liveStreams, pendingInput, 
     resumeText, isResuming, handleStartDebate, handleResumeContext, 
-    handleDeleteProject, fetchProjectState, startSSEResumeStream
+    handleDeleteProject, fetchProjectState, startSSEResumeStream, toggleCavemanMode
   ]);
 
   return (

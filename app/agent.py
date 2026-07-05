@@ -46,9 +46,11 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
     if isinstance(node_input, dict):
         project_id = node_input.get("project_id", "default_proj")
         concept = node_input.get("concept", "")
+        caveman_mode = node_input.get("caveman_mode", True)
     else:
         project_id = "default_proj"
         concept = str(node_input)
+        caveman_mode = True
     
     # Check if we are resuming an existing restored state
     if ctx.state.get("current_round", 0) > 0:
@@ -57,6 +59,7 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
     # Store initial concept and project_id in the workflow state
     ctx.state["project_id"] = project_id
     ctx.state["concept"] = concept
+    ctx.state["caveman_mode"] = caveman_mode
     ctx.state["current_round"] = 1
     ctx.state["rounds_history"] = []
     ctx.state["consensus_achieved"] = False

@@ -1,5 +1,6 @@
 import os
 import logging
+from pathlib import Path
 from google import genai
 from google.genai import types
 from google.adk.workflow import node
@@ -8,6 +9,7 @@ from google.adk.events.event import Event
 
 from app.config import settings
 from app.shared_state import ACTIVE_DIRECTIVES
+from app.utils import load_matching_skills
 from app.agents.sre.prompt import get_sre_prompt
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,12 @@ async def sre_agent_node(ctx: Context, node_input: str):
     # Extract any active judge feedback directive from shared registries or state
     judge_directive = ACTIVE_DIRECTIVES.get(project_id) or ctx.state.get("latest_judge_directive", None)
 
-    prompt = get_sre_prompt(proposal, judge_directive=judge_directive)
+    # Dynamically load matching domain skills from local skills/ directory without crossing folder boundaries
+    skills_dir = Path(__file__).parent / "skills"
+    caveman_trigger = " caveman mode" if ctx.state.get("caveman_mode", True) else ""
+    matched_skills = load_matching_skills(skills_dir, f"{proposal}{caveman_trigger}")
+
+    prompt = get_sre_prompt(proposal, judge_directive=judge_directive, skills_context=matched_skills)
 
     previous_interaction_id = ctx.state.get("sre_interaction_id")
     critique_text = ""
@@ -46,7 +53,7 @@ async def sre_agent_node(ctx: Context, node_input: str):
         )
 
         async for chunk in response_stream:
-            if chunk.steps:
+            if getattr(chunk, "steps", None):
                 step = chunk.steps[-1]
                 if step.content and step.content[0].text:
                     text = step.content[0].text

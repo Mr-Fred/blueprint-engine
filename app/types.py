@@ -39,3 +39,4 @@ class DebateState(BaseModel):
     latest_proposal: Optional[str] = Field(None, description="The most recent proposal draft")
     latest_judge_directive: Optional[str] = Field(None, description="The active or pending judge feedback directive")
     force_synthesis_flag: bool = Field(default=False, description="Flag to immediately synthesize blueprints regardless of scores")
+    caveman_mode: bool = Field(default=True, description="Whether to enable ultra-compressed caveman communication mode by default")

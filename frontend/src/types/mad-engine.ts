@@ -24,6 +24,7 @@ export interface DebateState {
   consensus_achieved: boolean;
   final_prd: string | null;
   final_architecture: string | null;
+  caveman_mode?: boolean;
 }
 
 export interface ProjectInfo {
