@@ -28,9 +28,9 @@ async def grill_node(ctx: Context, node_input: Any):
     client = get_genai_client()
     concept = ctx.state.get("concept", "")
 
-    previous_interaction_id = ctx.state.get("temp:grill_interaction_id")
+    previous_interaction_id = ctx.state.get("grill_interaction_id")
 
-    question_count = ctx.state.get("temp:grill_question_count", 0)
+    question_count = ctx.state.get("grill_question_count", 0)
     max_questions = 5
 
     # Maintain a log for the UI to render the chat history
@@ -59,7 +59,7 @@ async def grill_node(ctx: Context, node_input: Any):
             return
 
         question_count += 1
-        ctx.state["temp:grill_question_count"] = question_count
+        ctx.state["grill_question_count"] = question_count
         grill_history.append({"role": "user", "content": user_answer})
         ctx.state["grill_history"] = grill_history
 
@@ -93,7 +93,7 @@ async def grill_node(ctx: Context, node_input: Any):
         )
 
         if hasattr(response, "id") and response.id:
-            ctx.state["temp:grill_interaction_id"] = response.id
+            ctx.state["grill_interaction_id"] = response.id
 
         text = response.steps[-1].content[0].text.strip()
     except Exception as e:

@@ -185,6 +185,10 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
     import json
     FilesystemJail.write_project_file(project_id, f"round_{current_round}.json", new_round.model_dump_json())
     
+    history = ctx.state.get("rounds_history", [])
+    history.append(new_round.model_dump())
+    ctx.state["rounds_history"] = history
+    
     consensus = scores.meets_threshold(settings.gate_threshold)
     ctx.state["consensus_achieved"] = consensus
     
@@ -204,6 +208,11 @@ async def evaluate_and_score_node(ctx: Context, node_input: dict) -> Event:
         f"Scores: P:{scores.performance:.2f} S:{scores.scalability:.2f} Sec:{scores.security:.2f} "
         f"R:{scores.reliability:.2f} M:{scores.maintainability:.2f} C:{scores.cost_efficiency:.2f}. "
         f"Reply 'SYNTHESIZE' to force finish, 'CONTINUE' to proceed, or provide a text directive."
+    )
+    # Yield intermediate state sync event so frontend/main.py synchronizes completed round before suspending
+    yield Event(
+        output="Round complete, awaiting judge review",
+        custom_metadata={"state": ctx.state.to_dict()}
     )
     # Rule 3 Fix: We didn't reach consensus, so we yield RequestInput to allow HITL intervention
     yield RequestInput(
