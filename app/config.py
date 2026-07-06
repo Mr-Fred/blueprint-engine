@@ -1,18 +1,21 @@
 import os
+from typing import Optional
+
 import google.auth
+from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel, Field
-from typing import Optional
-from dotenv import load_dotenv
+
 
 class AppConfig(BaseModel):
     project_id: str = Field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_PROJECT", ""))
     location: str = Field(default="global")
     use_vertex_ai: bool = Field(default=False)
     developer_knowledge_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"))
-    model_id: str = Field(default="gemini-3-flash-preview")
+    model_id: str = Field(default="gemini-3.5-flash")
     gate_threshold: float = Field(default=0.85)
     max_rounds: int = Field(default=10)
+    mock_mode: bool = Field(default=False)
 
     def get_genai_client(self) -> genai.Client:
         """Creates a Google GenAI Client configured for either Vertex AI or standard Gemini API."""
@@ -26,7 +29,7 @@ class AppConfig(BaseModel):
         # Ensure environment variables are loaded from root and frontend .env files
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         load_dotenv(os.path.join(root_dir, ".env"))
-        load_dotenv(os.path.join(root_dir, "frontend", ".env"))
+        # load_dotenv(os.path.join(root_dir, "frontend", ".env"))
         load_dotenv()
 
         # Auto-detect GCP project if not set
@@ -34,23 +37,24 @@ class AppConfig(BaseModel):
             try:
                 _, project_id = google.auth.default()
                 os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-            except Exception as e:
+            except Exception as e:  # noqa: F841
                 # Fallback gracefully or log
                 pass
-        
+
         os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-        
+
         # Instantiate and validate Pydantic fields
         config = cls(
             project_id=os.getenv("GOOGLE_CLOUD_PROJECT", ""),
             location="global",
-            use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "False").lower() in ["true", "1"],
+            use_vertex_ai=os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "False").lower() in ["true", "1"],
             developer_knowledge_api_key=os.getenv("DEVELOPER_KNOWLEDGE_API_KEY"),
-            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-3-flash-preview"),
+            model_id=os.getenv("DEBATE_MODEL_ID", "gemini-3.5-flash"),
             gate_threshold=float(os.getenv("DEBATE_GATE_THRESHOLD", "0.85")),
-            max_rounds=int(os.getenv("DEBATE_MAX_ROUNDS", "10")),
+            max_rounds=int(os.getenv("DEBATE_MAX_ROUNDS", "5")),
+            mock_mode=os.getenv("MOCK_MODE", "False").lower() in ["true", "1", "yes"],
         )
-        
+
         if config.use_vertex_ai and not config.project_id:
             raise ValueError(
                 "GOOGLE_CLOUD_PROJECT environment variable is missing and could not be auto-detected. "
@@ -61,7 +65,7 @@ class AppConfig(BaseModel):
                 "GEMINI_API_KEY environment variable is missing. "
                 "When not using Vertex AI, please provide a valid GEMINI_API_KEY in your .env file."
             )
-            
+
         return config
 
 # Solitary global config instance loaded and validated at import time

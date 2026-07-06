@@ -119,8 +119,34 @@ class ProjectInfoResponse(BaseModel):
     concept: str
     status: str
 
+def resolve_project_artifacts(pid: str):
+    """
+    Safely resolves placeholder strings like '[Saved to PRD.md]' or missing fields by reading actual markdown files from disk.
+    """
+    if pid not in DEBATE_SESSIONS:
+        return
+    state = DEBATE_SESSIONS[pid]
+    try:
+        prd_path = FilesystemJail.resolve_jailed_path(pid, "PRD.md")
+        arch_path = FilesystemJail.resolve_jailed_path(pid, "ARCHITECTURE.md")
+        
+        if (state.final_prd == "[Saved to PRD.md]" or not state.final_prd) and prd_path.exists():
+            try:
+                state.final_prd = prd_path.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"Failed reading PRD.md for {pid}: {e}")
+                
+        if (state.final_architecture == "[Saved to ARCHITECTURE.md]" or not state.final_architecture) and arch_path.exists():
+            try:
+                state.final_architecture = arch_path.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"Failed reading ARCHITECTURE.md for {pid}: {e}")
+    except Exception as e:
+        print(f"Failed resolving paths for project {pid}: {e}")
+
 def ensure_project_loaded(pid: str):
     if pid in DEBATE_SESSIONS:
+        resolve_project_artifacts(pid)
         return
     out_dir = FilesystemJail.BASE_OUTPUT_DIR
     item = out_dir / pid
@@ -154,6 +180,7 @@ def ensure_project_loaded(pid: str):
                 concept="Restored Project (In Progress)",
                 consensus_achieved=False,
             )
+    resolve_project_artifacts(pid)
 
 @app.get("/api/projects", response_model=List[ProjectInfoResponse])
 async def list_projects():

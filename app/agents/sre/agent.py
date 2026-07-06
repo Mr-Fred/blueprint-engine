@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -19,7 +20,7 @@ def get_genai_client() -> genai.Client:
     return settings.get_genai_client()
 
 @node
-async def sre_agent_node(ctx: Context, node_input: str):
+async def sre_agent_node(ctx: Context, node_input: str) -> Event:
     """The Site Reliability Engineer critiques the proposal draft.
     
     Streams tokens in real time to the frontend SSE client, then yields the final complete audit critique
@@ -42,38 +43,45 @@ async def sre_agent_node(ctx: Context, node_input: str):
     previous_interaction_id = ctx.state.get("sre_interaction_id")
     critique_text = ""
 
-    try:
-        # Try stateful interactions API first
-        response_stream = await client.aio.interactions.create(
-            model=settings.model_id,
-            input=prompt,
-            stream=True,
-            store=True,
-            previous_interaction_id=previous_interaction_id
-        )
+    if settings.mock_mode:
+        critique_text = "### [MOCK MODE] SRE & Scalability Audit\n\n- **Chaos Engineering**: Add automated chaos mesh testing for multi-region Spanner failovers.\n- **Observability**: Export distributed OpenTelemetry traces to Google Cloud Trace with 1% sampling.\n- **SLOs & Alerts**: Establish error budgets with paging rules triggered when P99 latency exceeds 250ms.\n"
+        for line in critique_text.splitlines(keepends=True):
+            yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=line)]))
+            await asyncio.sleep(0.05)
+    else:
+        try:
+            # Try stateful interactions API first
+            response_stream = await client.aio.interactions.create(
+                model=settings.model_id,
+                input=prompt,
+                stream=True,
+                store=True,
+                previous_interaction_id=previous_interaction_id
+            )
 
-        async for chunk in response_stream:
-            if getattr(chunk, "steps", None):
-                step = chunk.steps[-1]
-                if step.content and step.content[0].text:
-                    text = step.content[0].text
+            async for chunk in response_stream:
+                if getattr(chunk, "steps", None):
+                    step = chunk.steps[-1]
+                    if step.content and step.content[0].text:
+                        text = step.content[0].text
+                        critique_text += text
+                        yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+                
+                # Save the server-side stateful interaction ID
+                if hasattr(chunk, "id") and chunk.id:
+                    ctx.state["sre_interaction_id"] = chunk.id
+        except Exception as e:
+            logger.warning(f"Interactions API failed for sre agent, falling back to generate_content_stream: {e}")
+            # Bounded fallback to standard generation stream
+            response_stream = await client.aio.models.generate_content_stream(
+                model=settings.model_id,
+                contents=prompt
+            )
+            async for chunk in response_stream:
+                text = chunk.text or ""
+                if text:
                     critique_text += text
                     yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
-            
-            # Save the server-side stateful interaction ID
-            if hasattr(chunk, "id") and chunk.id:
-                ctx.state["sre_interaction_id"] = chunk.id
-    except Exception as e:
-        logger.warning(f"Interactions API failed for sre agent, falling back to generate_content_stream: {e}")
-        # Bounded fallback to standard generation stream
-        response_stream = await client.aio.models.generate_content_stream(
-            model=settings.model_id,
-            contents=prompt
-        )
-        async for chunk in response_stream:
-            text = chunk.text or ""
-            if text:
-                critique_text += text
-                yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
     yield Event(output=critique_text, custom_metadata={"state": ctx.state.to_dict()})
+

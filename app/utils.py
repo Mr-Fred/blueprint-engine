@@ -1,6 +1,24 @@
 import os
 import shutil
 from pathlib import Path
+import json
+from typing import Any
+
+def parse_node_input(node_input: Any) -> Any:
+    """Safely extracts and parses node input from ADK Content/Part objects or strings into dictionaries or strings."""
+    if hasattr(node_input, "parts") and getattr(node_input, "parts", None):
+        for p in node_input.parts:
+            if getattr(p, "text", None):
+                node_input = p.text
+                break
+    if isinstance(node_input, str):
+        try:
+            parsed = json.loads(node_input)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return node_input
 
 class FilesystemJail:
     """Utility class to enforce strictly jailed filesystem sandboxing on a per-project basis.
