@@ -58,56 +58,70 @@ export function MADEngineConsensus() {
             
             <div className="flex items-center gap-5 z-10">
               <div className="relative flex items-center justify-center">
-                <svg className="w-20 h-20 transform -rotate-90">
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r="34"
-                    className="stroke-slate-800"
-                    strokeWidth="6"
-                    fill="transparent"
-                  />
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r="34"
-                    className={activeProject.consensus_achieved ? "stroke-emerald-400" : avgScore >= 0.7 ? "stroke-indigo-400" : "stroke-amber-400"}
-                    strokeWidth="6"
-                    fill="transparent"
-                    strokeDasharray={213.6}
-                    strokeDashoffset={213.6 - (213.6 * Math.min(avgScore, 1))}
-                    strokeLinecap="round"
-                    style={{ transition: "stroke-dashoffset 1s ease-in-out" }}
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center justify-center text-center">
-                  <span className="text-[9px] text-slate-400 font-medium uppercase tracking-tight">Quality</span>
-                  <span className={`text-xs font-black font-mono tracking-tight ${avgScore >= 0.85 ? "text-emerald-400" : "text-white"}`}>
-                    {(avgScore * 100).toFixed(0)}%
-                  </span>
-                </div>
+                {(() => {
+                  const isDone = activeProject.consensus_achieved || Boolean(activeProject.final_prd) || Boolean(activeProject.final_architecture);
+                  return (
+                    <>
+                      <svg className="w-20 h-20 transform -rotate-90">
+                        <circle
+                          cx="40"
+                          cy="40"
+                          r="34"
+                          className="stroke-slate-800"
+                          strokeWidth="6"
+                          fill="transparent"
+                        />
+                        <circle
+                          cx="40"
+                          cy="40"
+                          r="34"
+                          className={isDone ? "stroke-emerald-400" : avgScore >= 0.7 ? "stroke-indigo-400" : "stroke-amber-400"}
+                          strokeWidth="6"
+                          fill="transparent"
+                          strokeDasharray={213.6}
+                          strokeDashoffset={213.6 - (213.6 * Math.min(avgScore, 1))}
+                          strokeLinecap="round"
+                          style={{ transition: "stroke-dashoffset 1s ease-in-out" }}
+                        />
+                      </svg>
+                      <div className="absolute flex flex-col items-center justify-center text-center">
+                        <span className="text-[9px] text-slate-400 font-medium uppercase tracking-tight">Quality</span>
+                        <span className={`text-xs font-black font-mono tracking-tight ${isDone || avgScore >= 0.85 ? "text-emerald-400" : "text-white"}`}>
+                          {(avgScore * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="flex flex-col gap-1 border-l border-slate-800/80 pl-4 py-0.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
-                  {activeProject.consensus_achieved ? (
+                {(() => {
+                  const isDone = activeProject.consensus_achieved || Boolean(activeProject.final_prd) || Boolean(activeProject.final_architecture);
+                  return (
                     <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-400">Consensus Met</span>
+                      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
+                        {isDone ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-emerald-400">Consensus / Done</span>
+                          </>
+                        ) : (
+                          <>
+                            <Award className="w-3.5 h-3.5 text-amber-400" />
+                            <span className="text-amber-400">In Review</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-tight">
+                        Target Threshold: <span className="font-mono text-slate-200 font-bold">85%</span>
+                      </p>
+                      <p className="text-[10px] text-slate-500 leading-tight">
+                        {isDone ? "All pillars verified & blueprints built." : "Iterating towards target quality."}
+                      </p>
                     </>
-                  ) : (
-                    <>
-                      <Award className="w-3.5 h-3.5 text-amber-400" />
-                      <span className="text-amber-400">In Review</span>
-                    </>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 leading-tight">
-                  Target Threshold: <span className="font-mono text-slate-200 font-bold">85%</span>
-                </p>
-                <p className="text-[10px] text-slate-500 leading-tight">
-                  {activeProject.consensus_achieved ? "All 6 pillars verified." : "Iterating towards target quality."}
-                </p>
+                  );
+                })()}
               </div>
             </div>
           </div>

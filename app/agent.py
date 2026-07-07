@@ -280,6 +280,7 @@ async def synthesis_node(ctx: Context, node_input: dict) -> Event:
 
     ctx.state["final_prd"] = "[Saved to PRD.md]"
     ctx.state["final_architecture"] = "[Saved to ARCHITECTURE.md]"
+    ctx.state["consensus_achieved"] = True
 
     state_dump = ctx.state.to_dict()
     FilesystemJail.write_project_file(project_id, "state.json", json.dumps(state_dump, indent=2))

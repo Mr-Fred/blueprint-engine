@@ -385,20 +385,24 @@ export function MADEngineArena() {
                 <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2 animate-pulse">
                   <Activity className="w-4 h-4 animate-spin text-indigo-500" /> Multi-Agent Graph Executing...
                 </span>
+              ) : (activeProject.consensus_achieved || Boolean(activeProject.final_prd) || Boolean(activeProject.final_architecture)) ? (
+                <div className="flex items-center justify-center w-full px-2">
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Debate Completed & Blueprints Synthesized
+                  </span>
+                </div>
               ) : (
                 <div className="flex items-center justify-between w-full px-2">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-slate-500 animate-pulse"></span> Awaiting Next Round / Standby
                   </span>
-                  {!activeProject.consensus_achieved && (
-                    <button
-                      onClick={() => startSSEResumeStream(activeProject.project_id)}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 rounded-xl font-bold text-xs transition text-white shadow-[0_0_15px_rgba(79,70,229,0.4)] cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      Resume Debate Session
-                    </button>
-                  )}
+                  <button
+                    onClick={() => startSSEResumeStream(activeProject.project_id)}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 rounded-xl font-bold text-xs transition text-white shadow-[0_0_15px_rgba(79,70,229,0.4)] cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    Resume Debate Session
+                  </button>
                 </div>
               )}
             </div>

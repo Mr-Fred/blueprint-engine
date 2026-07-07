@@ -141,6 +141,9 @@ def resolve_project_artifacts(pid: str):
                 state.final_architecture = arch_path.read_text(encoding="utf-8")
             except Exception as e:
                 print(f"Failed reading ARCHITECTURE.md for {pid}: {e}")
+                
+        if state.final_prd or state.final_architecture or prd_path.exists() or arch_path.exists():
+            state.consensus_achieved = True
     except Exception as e:
         print(f"Failed resolving paths for project {pid}: {e}")
 
@@ -201,7 +204,10 @@ async def list_projects():
             
             if pid in DEBATE_SESSIONS:
                 state = DEBATE_SESSIONS[pid]
-                status = "completed" if state.consensus_achieved else "active"
+                is_done = state.consensus_achieved or bool(state.final_prd) or bool(state.final_architecture) or (item / "PRD.md").exists() or (item / "ARCHITECTURE.md").exists()
+                if is_done:
+                    state.consensus_achieved = True
+                status = "completed" if is_done else "active"
                 projects.append(ProjectInfoResponse(
                     project_id=pid,
                     concept=state.concept,
