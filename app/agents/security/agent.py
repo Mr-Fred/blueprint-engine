@@ -54,7 +54,7 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
         try:
             # Try stateful interactions API first
             response_stream = await client.aio.interactions.create(
-                model=settings.model_id,
+                model=settings.auditor_model_id,
                 input=prompt,
                 stream=True,
                 store=True,
@@ -76,7 +76,7 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
             logger.warning(f"Interactions API failed for security agent, falling back to generate_content_stream: {e}")
             # Bounded fallback to standard generation stream
             response_stream = await client.aio.models.generate_content_stream(
-                model=settings.model_id,
+                model=settings.auditor_model_id,
                 contents=prompt
             )
             async for chunk in response_stream:

@@ -39,15 +39,17 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
         concept = str(node_input)
         caveman_mode = True
 
-    # Check if we are resuming an existing restored state
-    if ctx.state.get("current_round", 0) > 0:
-        if isinstance(node_input, dict) and "judge_review" in node_input:
-            return Event(output=node_input, route="review", custom_metadata={"state": ctx.state.to_dict()})
-        elif isinstance(node_input, dict) and "grill_question" in node_input:
-            return Event(output=node_input, route="grill", custom_metadata={"state": ctx.state.to_dict()})
-        return Event(output=ctx.state.get("concept"), route="ready", custom_metadata={"state": ctx.state.to_dict()})
+    # Check explicit resume inputs first
+    if isinstance(node_input, dict) and "judge_review" in node_input:
+        return Event(output=node_input, route="review", custom_metadata={"state": ctx.state.to_dict()})
+    elif isinstance(node_input, dict) and "grill_question" in node_input:
+        return Event(output=node_input, route="grill", custom_metadata={"state": ctx.state.to_dict()})
 
-    # Store initial concept and project_id in the workflow state
+    # If grilling has completed or debate rounds already exist, route to 'ready'
+    if ctx.state.get("grill_completed", False) or len(ctx.state.get("rounds_history", [])) > 0:
+        return Event(output=ctx.state.get("concept", concept), route="ready", custom_metadata={"state": ctx.state.to_dict()})
+
+    # Store initial concept and project_id in the workflow state for fresh sessions
     ctx.state["project_id"] = project_id
     ctx.state["concept"] = concept
     ctx.state["caveman_mode"] = caveman_mode

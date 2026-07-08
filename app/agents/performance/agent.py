@@ -113,7 +113,7 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     else:
         try:
             response = await client.aio.interactions.create(
-                model=settings.model_id,
+                model=settings.grill_model_id,
                 input=prompt,
                 previous_interaction_id=previous_interaction_id
             )
@@ -138,7 +138,7 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
             fallback_prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
 
             fallback_res = await client.aio.models.generate_content(
-                model=settings.model_id,
+                model=settings.grill_model_id,
                 contents=fallback_prompt
             )
             text = fallback_res.text.strip()
@@ -211,7 +211,7 @@ async def performance_agent_node(ctx: Context, node_input: str) -> Event:
         try:
             # Try stateful interactions API first
             response_stream = await client.aio.interactions.create(
-                model=settings.model_id,
+                model=settings.grill_model_id,
                 input=prompt,
                 stream=True,
                 store=True,
@@ -232,7 +232,7 @@ async def performance_agent_node(ctx: Context, node_input: str) -> Event:
             logger.warning(f"Interactions API failed for performance agent, falling back to generate_content_stream: {e}")
             # Bounded fallback to standard generation stream
             response_stream = await client.aio.models.generate_content_stream(
-                model=settings.model_id,
+                model=settings.grill_model_id,
                 contents=prompt
             )
             async for chunk in response_stream:

@@ -69,19 +69,19 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
         )
     else:
         try:
-            prd_response = await client.aio.interactions.create(model=settings.model_id, input=prd_prompt)
+            prd_response = await client.aio.interactions.create(model=settings.synthesizer_model_id, input=prd_prompt)
             prd_content = prd_response.steps[-1].content[0].text
         except Exception as e:
             logger.warning(f"Interactions failed for PRD synthesis, falling back: {e}")
-            prd_response = await client.aio.models.generate_content(model=settings.model_id, contents=prd_prompt)
+            prd_response = await client.aio.models.generate_content(model=settings.synthesizer_model_id, contents=prd_prompt)
             prd_content = prd_response.text
 
         try:
-            arch_response = await client.aio.interactions.create(model=settings.model_id, input=arch_prompt)
+            arch_response = await client.aio.interactions.create(model=settings.synthesizer_model_id, input=arch_prompt)
             arch_content = arch_response.steps[-1].content[0].text
         except Exception as e:
             logger.warning(f"Interactions failed for ARCHITECTURE synthesis, falling back: {e}")
-            arch_response = await client.aio.models.generate_content(model=settings.model_id, contents=arch_prompt)
+            arch_response = await client.aio.models.generate_content(model=settings.synthesizer_model_id, contents=arch_prompt)
             arch_content = arch_response.text
 
     FilesystemJail.write_project_file(project_id, "PRD.md", prd_content)

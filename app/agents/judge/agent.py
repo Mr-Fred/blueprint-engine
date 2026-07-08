@@ -129,7 +129,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
     else:
         try:
             response = await client.aio.interactions.create(
-                model=settings.model_id,
+                model=settings.judge_model_id,
                 input=prompt,
                 response_format=ScoreResult.model_json_schema(),
             )
@@ -140,7 +140,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
         except Exception as e:
             logger.warning(f"Interactions failed in evaluate_and_score_node, falling back to generate_content: {e}")
             response = await client.aio.models.generate_content(
-                model=settings.model_id,
+                model=settings.judge_model_id,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
