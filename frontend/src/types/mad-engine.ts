@@ -31,6 +31,9 @@ export interface ProjectInfo {
   project_id: string;
   concept: string;
   status: string;
+  consensus_achieved?: boolean;
+  final_prd?: string | null;
+  final_architecture?: string | null;
 }
 
 export interface LiveStreamChunk {

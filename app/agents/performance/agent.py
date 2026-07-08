@@ -13,6 +13,7 @@ from google.genai import types
 from app.agents.performance.prompt import get_performance_prompt
 from app.config import settings
 from app.shared_state import ACTIVE_DIRECTIVES
+from app.types import DebateRoundEnvelope
 from app.utils import load_matching_skills, parse_node_input
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,34 @@ logger = logging.getLogger(__name__)
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     return settings.get_genai_client()
+
+
+def should_exit_grill(
+    ctx: Context,
+    user_answer: str = "",
+    question_count: int = 0,
+    max_questions: int = 3,
+    model_output: str = "",
+) -> bool:
+    """Deterministic routing predicate for the grill phase.
+    
+    Returns True if the interview phase should immediately exit to architectural debate.
+    """
+    if ctx.state.get("grill_completed", False) or ctx.state.get("current_round", 1) > 1:
+        return True
+
+    clean_user = user_answer.strip().upper()
+    if clean_user in {"SKIP_INTERVIEW", "READY", "SKIP"}:
+        return True
+
+    if question_count >= max_questions:
+        return True
+
+    clean_model = model_output.strip().upper()
+    if clean_model == "READY" or clean_model.startswith("READY"):
+        return True
+
+    return False
 
 
 @node
@@ -40,38 +69,26 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     # Maintain a log for the UI to render the chat history
     grill_history = ctx.state.get("grill_history", [])
 
-    if ctx.state.get("grill_completed", False) or ctx.state.get("current_round", 1) > 1 or any(
-        "READY" in msg.get("content", "") or "skipped" in msg.get("content", "").lower() or "proceeding" in msg.get("content", "").lower()
-        for msg in grill_history
-    ):
-        ctx.state["grill_completed"] = True
-        yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
-        return
-
     # Handle user responses injected via resume
     user_answer = ""
-
     if isinstance(node_input, dict) and "grill_question" in node_input:
         user_answer = str(node_input["grill_question"])
-
-        if user_answer.strip() == "SKIP_INTERVIEW":
-            grill_history.append({"role": "assistant", "content": "Interview manually skipped. Proceeding to architectural debate."})
-            ctx.state["grill_history"] = grill_history
-            ctx.state["grill_completed"] = True
-            yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
-            return
-
         question_count += 1
         ctx.state["grill_question_count"] = question_count
         grill_history.append({"role": "user", "content": user_answer})
         ctx.state["grill_history"] = grill_history
 
-        if question_count >= max_questions:
+    # 1. Deterministic Routing Guard (Pre-LLM)
+    if should_exit_grill(ctx, user_answer=user_answer, question_count=question_count, max_questions=max_questions):
+        if user_answer.strip().upper() in {"SKIP_INTERVIEW", "SKIP"}:
+            grill_history.append({"role": "assistant", "content": "Interview manually skipped. Proceeding to architectural debate."})
+            ctx.state["grill_history"] = grill_history
+        elif question_count >= max_questions:
             grill_history.append({"role": "assistant", "content": "I have all the context I need. Proceeding to architectural debate."})
             ctx.state["grill_history"] = grill_history
-            ctx.state["grill_completed"] = True
-            yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
-            return
+        ctx.state["grill_completed"] = True
+        yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
+        return
 
     if not previous_interaction_id:
         prompt = f"""
@@ -84,10 +101,7 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     else:
         prompt = user_answer
 
-    if question_count >= max_questions:
-        prompt += "\nCRITICAL: You have reached the maximum number of questions. You MUST reply exactly with: READY"
-    else:
-        prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
+    prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
 
     if settings.mock_mode:
         if question_count == 0:
@@ -110,7 +124,6 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
             text = response.steps[-1].content[0].text.strip()
         except Exception as e:
             logger.warning(f"Interactions failed in grill_node, falling back to generate_content: {e}")
-            # Standard stateless fallback logic requires manual history injection
             fallback_prompt = f"""
             You are the Lead Performance Architect preparing to design: "{concept}".
             Your goal is to grill the user to resolve critical architectural design dependencies.
@@ -122,10 +135,7 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
                 history_str = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in grill_history])
                 fallback_prompt += f"\n\nConversation History:\n{history_str}\n"
 
-            if question_count >= max_questions:
-                fallback_prompt += "\nCRITICAL: You have reached the maximum number of questions. You MUST reply exactly with: READY"
-            else:
-                fallback_prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
+            fallback_prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
 
             fallback_res = await client.aio.models.generate_content(
                 model=settings.model_id,
@@ -137,7 +147,8 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     grill_history.append({"role": "assistant", "content": text})
     ctx.state["grill_history"] = grill_history
 
-    if text == "READY":
+    # 2. Deterministic Routing Guard (Post-LLM)
+    if should_exit_grill(ctx, question_count=question_count, max_questions=max_questions, model_output=text):
         ctx.state["grill_completed"] = True
         yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
         return
@@ -231,4 +242,8 @@ async def performance_agent_node(ctx: Context, node_input: str) -> Event:
                     yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
     ctx.state["latest_proposal"] = proposal_text
-    yield Event(output=proposal_text, custom_metadata={"state": ctx.state.to_dict()})
+    envelope = DebateRoundEnvelope(
+        proposal=proposal_text,
+        round_number=current_round,
+    )
+    yield Event(output=envelope.model_dump(), custom_metadata={"state": ctx.state.to_dict()})

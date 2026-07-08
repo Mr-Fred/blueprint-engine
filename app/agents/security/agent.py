@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 from google import genai
 from google.adk.agents.context import Context
@@ -11,7 +12,7 @@ from google.genai import types
 from app.agents.security.prompt import get_security_prompt
 from app.config import settings
 from app.shared_state import ACTIVE_DIRECTIVES
-from app.utils import load_matching_skills
+from app.utils import load_matching_skills, parse_node_input
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,16 @@ def get_genai_client() -> genai.Client:
     return settings.get_genai_client()
 
 @node
-async def security_agent_node(ctx: Context, node_input: str) -> Event:
+async def security_agent_node(ctx: Context, node_input: Any) -> Event:
     """The Security & Resilience Auditor critiques the proposal draft.
 
     Streams tokens in real time to the frontend SSE client, then yields the final complete audit critique
     to downstream join nodes in the graph.
     """
+    node_input = parse_node_input(node_input)
     client = get_genai_client()
     project_id = ctx.state.get("project_id", "default_proj")
-    proposal = node_input
+    proposal = node_input.get("proposal", str(node_input)) if isinstance(node_input, dict) else str(node_input)
 
     # Extract any active judge feedback directive from shared registries or state
     judge_directive = ACTIVE_DIRECTIVES.get(project_id) or ctx.state.get("latest_judge_directive", None)
@@ -83,5 +85,11 @@ async def security_agent_node(ctx: Context, node_input: str) -> Event:
                     critique_text += text
                     yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
-    yield Event(output=critique_text, custom_metadata={"state": ctx.state.to_dict()})
+    if isinstance(node_input, dict):
+        output_payload = dict(node_input)
+        output_payload["security_critique"] = critique_text
+    else:
+        output_payload = critique_text
+
+    yield Event(output=output_payload, custom_metadata={"state": ctx.state.to_dict()})
 

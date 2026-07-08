@@ -64,23 +64,25 @@ export function useDebateStream({ onStateUpdate, onFetchState }: UseDebateStream
     const content = rawData.content;
     const output = rawData.output;
     
-    let currentAgentName = null;
-    const rawPath = rawData.node_path || (rawData.nodeInfo && rawData.nodeInfo.path) || (rawData.node_info && rawData.node_info.path);
-    if (rawPath) {
-      const path = String(rawPath).toLowerCase();
-      if (path.includes("performance_agent_node") || path.includes("grill_node")) {
-        currentAgentName = "Performance & Scaling Architect";
-      } else if (path.includes("security_agent_node")) {
-        currentAgentName = "Security & Resilience Auditor";
-      } else if (path.includes("sre_agent_node")) {
-        currentAgentName = "SRE & Maintainability Lead";
-      } else if (path.includes("evaluate_and_score_node")) {
-        currentAgentName = "Master Architect Judge";
-      } else if (path.includes("synthesis_node")) {
-        currentAgentName = "Synthesizing Final Assets...";
+    let currentAgentName = rawData.agent_display_name || null;
+    if (!currentAgentName) {
+      const rawPath = rawData.node_path || (rawData.nodeInfo && rawData.nodeInfo.path) || (rawData.node_info && rawData.node_info.path);
+      if (rawPath) {
+        const path = String(rawPath).toLowerCase();
+        if (path.includes("performance_agent_node") || path.includes("grill_node")) {
+          currentAgentName = "Performance & Scaling Architect";
+        } else if (path.includes("security_agent_node")) {
+          currentAgentName = "Security & Resilience Auditor";
+        } else if (path.includes("sre_agent_node")) {
+          currentAgentName = "SRE & Maintainability Lead";
+        } else if (path.includes("evaluate_and_score_node")) {
+          currentAgentName = "Master Architect Judge";
+        } else if (path.includes("synthesis_node")) {
+          currentAgentName = "Synthesizing Final Assets...";
+        }
       }
-      if (currentAgentName) setLiveAgent(currentAgentName);
     }
+    if (currentAgentName) setLiveAgent(currentAgentName);
 
     if (content && content.parts) {
       const textChunk = content.parts.map((p: { text?: string }) => p.text || "").join("");

@@ -48,9 +48,16 @@ function MADEngineLayout() {
           <Separator className="w-1.5 rounded-full bg-slate-800/50 hover:bg-indigo-500/50 transition-colors mx-1 cursor-col-resize" />
           
           {/* Right column - Consensus, Scores, and Document Synthesizer */}
-          <Panel defaultSize="30%" minSize="20%" maxSize="50%" className="flex flex-col gap-6 pl-3 min-h-0">
-            <MADEngineConsensus />
-            <MADEngineBlueprints />
+          <Panel defaultSize="30%" minSize="20%" maxSize="50%" className="flex flex-col pl-3 min-h-0">
+            <Group orientation="vertical" className="h-full">
+              <Panel defaultSize="35%" minSize="15%" className="flex flex-col pb-3 min-h-0 overflow-y-auto">
+                <MADEngineConsensus />
+              </Panel>
+              <Separator className="h-1.5 rounded-full bg-slate-800/50 hover:bg-indigo-500/50 transition-colors my-1 cursor-row-resize shrink-0" />
+              <Panel defaultSize="65%" minSize="25%" className="flex flex-col pt-3 min-h-0 overflow-hidden">
+                <MADEngineBlueprints />
+              </Panel>
+            </Group>
           </Panel>
           
         </Group>

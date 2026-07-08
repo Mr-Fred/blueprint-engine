@@ -142,8 +142,7 @@ def resolve_project_artifacts(pid: str):
             except Exception as e:
                 print(f"Failed reading ARCHITECTURE.md for {pid}: {e}")
                 
-        if state.final_prd or state.final_architecture or prd_path.exists() or arch_path.exists():
-            state.consensus_achieved = True
+        state.consensus_achieved = prd_path.exists() or arch_path.exists()
     except Exception as e:
         print(f"Failed resolving paths for project {pid}: {e}")
 
@@ -233,256 +232,177 @@ async def delete_project(project_id: str):
 
 
 
+async def stream_adk_events(
+    runner: Runner,
+    project_id: str,
+    message: Optional[types.Content] = None,
+):
+    """Unified SSE streaming generator that executes ADK Runner and yields enriched SSE frames."""
+    try:
+        is_suspended = False
+        async for event in runner.run_async(
+            new_message=message,
+            user_id="judge",
+            session_id=project_id,
+            run_config=RunConfig(streaming_mode=StreamingMode.SSE),
+        ):
+            is_req_input = False
+            if getattr(event, "content", None) and event.content.parts:
+                for part in event.content.parts:
+                    fc = getattr(part, "function_call", None)
+                    if fc and getattr(fc, "name", None) == "adk_request_input":
+                        is_req_input = True
+                        is_suspended = True
+                        req_args = getattr(fc, "args", {}) or {}
+                        if not isinstance(req_args, dict):
+                            req_args = dict(req_args)
+
+                        payload = req_args.get("payload") or {}
+                        message_desc = req_args.get("message") or "Awaiting input"
+                        name = payload.get("name", "input") if isinstance(payload, dict) else "input"
+
+                        req_data = {
+                            "request_input": {
+                                "name": name,
+                                "description": message_desc,
+                            }
+                        }
+                        yield f"data: {json.dumps(req_data)}\n\n"
+                        break
+
+            if not is_req_input:
+                sync_debate_state_from_event(project_id, event)
+
+                event_dict = event.model_dump() if hasattr(event, "model_dump") else getattr(event, "__dict__", {})
+                agent_name = None
+                raw_path = getattr(event, "node_path", None) or event_dict.get("node_path")
+                if raw_path:
+                    path_str = str(raw_path).lower()
+                    if "performance_agent_node" in path_str or "grill_node" in path_str:
+                        agent_name = "Performance & Scaling Architect"
+                    elif "security_agent_node" in path_str:
+                        agent_name = "Security & Resilience Auditor"
+                    elif "sre_agent_node" in path_str:
+                        agent_name = "SRE & Maintainability Lead"
+                    elif "evaluate_and_score_node" in path_str:
+                        agent_name = "Master Architect Judge"
+                    elif "synthesis_node" in path_str:
+                        agent_name = "Synthesizing Final Assets..."
+
+                if agent_name:
+                    event_dict["agent_display_name"] = agent_name
+
+                yield f"data: {json.dumps(event_dict)}\n\n"
+            await asyncio.sleep(0.05)
+
+        final_state = DEBATE_SESSIONS.get(project_id)
+        if is_suspended:
+            if final_state:
+                yield f"data: {{\"event_type\": \"SUSPENDED\", \"state\": {final_state.model_dump_json()}}}\n\n"
+        else:
+            if final_state:
+                yield f"data: {{\"event_type\": \"COMPLETE\", \"state\": {final_state.model_dump_json()}}}\n\n"
+
+    except Exception as e:
+        yield f"data: {{\"event_type\": \"ERROR\", \"message\": \"{str(e)}\"}}\n\n"
+
+
 @app.get("/api/projects/{project_id}/stream")
 async def stream_debate(project_id: str):
-    ensure_project_loaded(project_id)
     """
     GET /api/projects/{project_id}/stream: Streams the live turn-by-turn multi-agent debate.
-    Ensures non-blocking async generator iterations.
     """
     ensure_project_loaded(project_id)
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
-        
-    session_state = DEBATE_SESSIONS[project_id]
-    
-    async def sse_generator():
-        try:
-            session = await GLOBAL_SESSION_SERVICE.get_session(
-                app_name="mad_engine",
-                user_id="judge",
-                session_id=project_id
-            )
-        except Exception as e:
-            print(f"Failed to get session: {e}")
-            session = None
-            
-        if not session:
-            session = await GLOBAL_SESSION_SERVICE.create_session(
-                user_id="judge", 
-                app_name="mad_engine",
-                session_id=project_id,
-                state=session_state.model_dump()
-            )
-        PROJECT_SESSIONS[project_id] = session.id
-        runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
-        
-        initial_input = {
-            "project_id": project_id,
-            "concept": session_state.concept,
-            "caveman_mode": session_state.caveman_mode
-        }
-        
-        message = types.Content(
-            role="user", 
-            parts=[types.Part.from_text(text=json.dumps(initial_input))]
-        )
-        
-        try:
-            is_suspended = False
-            async for event in runner.run_async(new_message=message, user_id="judge",
-                session_id=session.id, 
-                run_config=RunConfig(streaming_mode=StreamingMode.SSE)
-                ):
-                
-                is_req_input = False
-                if getattr(event, "content", None) and event.content.parts:
-                    for part in event.content.parts:
-                        fc = getattr(part, "function_call", None)
-                        if fc and getattr(fc, "name", None) == "adk_request_input":
-                            is_req_input = True
-                            is_suspended = True
-                            req_args = getattr(fc, "args", {}) or {}
-                            if not isinstance(req_args, dict):
-                                req_args = dict(req_args)
-                            
-                            payload = req_args.get("payload") or {}
-                            message_desc = req_args.get("message") or "Awaiting input"
-                            name = payload.get("name", "input") if isinstance(payload, dict) else "input"
-                            
-                            req_data = {
-                                "request_input": {
-                                    "name": name,
-                                    "description": message_desc
-                                }
-                            }
-                            yield f"data: {json.dumps(req_data)}\n\n"
-                            break
 
-                if not is_req_input:
-                    sync_debate_state_from_event(project_id, event)
-                    yield f"data: {event.model_dump_json()}\n\n"
-                await asyncio.sleep(0.05)  # Small delay to prevent overwhelming the frontend with data
-                
-            # Send dynamic final complete message or suspended message
-            final_state = DEBATE_SESSIONS.get(project_id)
-            if is_suspended:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"SUSPENDED\", \"state\": {final_state.model_dump_json()}}}\n\n"
-            else:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"COMPLETE\", \"state\": {final_state.model_dump_json()}}}\n\n"
-                
-        except Exception as e:
-            yield f"data: {{\"event_type\": \"ERROR\", \"message\": \"{str(e)}\"}}\n\n"
-            
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    session_state = DEBATE_SESSIONS[project_id]
+
+    try:
+        session = await GLOBAL_SESSION_SERVICE.get_session(
+            app_name="mad_engine",
+            user_id="judge",
+            session_id=project_id,
+        )
+    except Exception as e:
+        print(f"Failed to get session: {e}")
+        session = None
+
+    if not session:
+        session = await GLOBAL_SESSION_SERVICE.create_session(
+            user_id="judge",
+            app_name="mad_engine",
+            session_id=project_id,
+            state=session_state.model_dump(),
+        )
+    PROJECT_SESSIONS[project_id] = session.id
+    runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
+
+    initial_input = {
+        "project_id": project_id,
+        "concept": session_state.concept,
+        "caveman_mode": session_state.caveman_mode,
+    }
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=json.dumps(initial_input))],
+    )
+    return StreamingResponse(stream_adk_events(runner, project_id, message=message), media_type="text/event-stream")
+
 
 class ResumeRequest(BaseModel):
     input_name: str = Field(..., description="The name of the RequestInput (e.g., 'grill_question' or 'judge_review')")
     user_response: str = Field(..., description="The human text input")
 
+
 @app.get("/api/projects/{project_id}/resume_stream")
 async def resume_stream(project_id: str):
-    ensure_project_loaded(project_id)
     """
     GET /api/projects/{project_id}/resume_stream: Reconnects to a paused ADK graph stream without sending new input.
     """
     ensure_project_loaded(project_id)
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
-        
-    session_state = DEBATE_SESSIONS[project_id]
-        
-    async def sse_generator():
-        try:
-            session = await GLOBAL_SESSION_SERVICE.get_session(
-                app_name="mad_engine",
-                user_id="judge",
-                session_id=project_id
-            )
-        except Exception as e:
-            print(f"Failed to get session: {e}")
-            session = None
-            
-        if not session:
-            session = await GLOBAL_SESSION_SERVICE.create_session(
-                user_id="judge", 
-                app_name="mad_engine",
-                session_id=project_id,
-                state=session_state.model_dump()
-            )
-        runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
-        
-        try:
-            is_suspended = False
-            async for event in runner.run_async(
-                user_id="judge",
-                session_id=project_id, 
-                run_config=RunConfig(streaming_mode=StreamingMode.SSE)
-            ):
-                is_req_input = False
-                if getattr(event, "content", None) and event.content.parts:
-                    for part in event.content.parts:
-                        fc = getattr(part, "function_call", None)
-                        if fc and getattr(fc, "name", None) == "adk_request_input":
-                            is_req_input = True
-                            is_suspended = True
-                            req_args = getattr(fc, "args", {}) or {}
-                            if not isinstance(req_args, dict):
-                                req_args = dict(req_args)
-                            
-                            payload = req_args.get("payload") or {}
-                            message_desc = req_args.get("message") or "Awaiting input"
-                            name = payload.get("name", "input") if isinstance(payload, dict) else "input"
-                            
-                            req_data = {
-                                "request_input": {
-                                    "name": name,
-                                    "description": message_desc
-                                }
-                            }
-                            yield f"data: {json.dumps(req_data)}\n\n"
-                            break
 
-                if not is_req_input:
-                    sync_debate_state_from_event(project_id, event)
-                    yield f"data: {event.model_dump_json()}\n\n"
-                await asyncio.sleep(0.05)
-                
-            final_state = DEBATE_SESSIONS.get(project_id)
-            if is_suspended:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"SUSPENDED\", \"state\": {final_state.model_dump_json()}}}\n\n"
-            else:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"COMPLETE\", \"state\": {final_state.model_dump_json()}}}\n\n"
-                
-        except Exception as e:
-            yield f"data: {{\"event_type\": \"ERROR\", \"message\": \"{str(e)}\"}}\n\n"
-            
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    session_state = DEBATE_SESSIONS[project_id]
+
+    try:
+        session = await GLOBAL_SESSION_SERVICE.get_session(
+            app_name="mad_engine",
+            user_id="judge",
+            session_id=project_id,
+        )
+    except Exception as e:
+        print(f"Failed to get session: {e}")
+        session = None
+
+    if not session:
+        session = await GLOBAL_SESSION_SERVICE.create_session(
+            user_id="judge",
+            app_name="mad_engine",
+            session_id=project_id,
+            state=session_state.model_dump(),
+        )
+    runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
+    return StreamingResponse(stream_adk_events(runner, project_id, message=None), media_type="text/event-stream")
+
 
 @app.post("/api/projects/{project_id}/resume")
 async def resume_debate(project_id: str, req: ResumeRequest):
-    ensure_project_loaded(project_id)
     """
     POST /api/projects/{project_id}/resume: Resumes a paused ADK graph and streams the continuing debate.
     """
     ensure_project_loaded(project_id)
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
-        
-    session_id = project_id
-        
-    async def sse_generator():
-        runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
-        resume_payload = {req.input_name: req.user_response}
-        
-        try:
-            is_suspended = False
-            message = types.Content(
-                role="user", 
-                parts=[types.Part.from_text(text=json.dumps(resume_payload))]
-            )
-            
-            async for event in runner.run_async(
-                new_message=message,
-                user_id="judge",
-                session_id=session_id,
-                run_config=RunConfig(streaming_mode=StreamingMode.SSE)
-            ):
-                is_req_input = False
-                if getattr(event, "content", None) and event.content.parts:
-                    for part in event.content.parts:
-                        fc = getattr(part, "function_call", None)
-                        if fc and getattr(fc, "name", None) == "adk_request_input":
-                            is_req_input = True
-                            is_suspended = True
-                            req_args = getattr(fc, "args", {}) or {}
-                            if not isinstance(req_args, dict):
-                                req_args = dict(req_args)
-                            
-                            payload = req_args.get("payload") or {}
-                            message_desc = req_args.get("message") or "Awaiting input"
-                            name = payload.get("name", "input") if isinstance(payload, dict) else "input"
-                            
-                            req_data = {
-                                "request_input": {
-                                    "name": name,
-                                    "description": message_desc
-                                }
-                            }
-                            yield f"data: {json.dumps(req_data)}\n\n"
-                            break
 
-                if not is_req_input:
-                    sync_debate_state_from_event(project_id, event)
-                    yield f"data: {event.model_dump_json()}\n\n"
-                await asyncio.sleep(0.05)
-                
-            final_state = DEBATE_SESSIONS.get(project_id)
-            if is_suspended:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"SUSPENDED\", \"state\": {final_state.model_dump_json()}}}\n\n"
-            else:
-                if final_state:
-                    yield f"data: {{\"event_type\": \"COMPLETE\", \"state\": {final_state.model_dump_json()}}}\n\n"
-                
-        except Exception as e:
-            yield f"data: {{\"event_type\": \"ERROR\", \"message\": \"{str(e)}\"}}\n\n"
-            
-    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+    runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
+    resume_payload = {req.input_name: req.user_response}
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=json.dumps(resume_payload))],
+    )
+    return StreamingResponse(stream_adk_events(runner, project_id, message=message), media_type="text/event-stream")
 
 @app.get("/api/projects/{project_id}/state", response_model=DebateState)
 async def get_project_state(project_id: str):
