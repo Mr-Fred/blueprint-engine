@@ -42,6 +42,10 @@ class DebateState(BaseModel):
     caveman_mode: bool = Field(default=True, description="Whether to enable ultra-compressed caveman communication mode by default")
     grill_interaction_id: Optional[str] = Field(None, description="Active Interactions API session id for grilling phase")
     grill_question_count: int = Field(default=0, description="Counter for clarifying questions asked during interview")
+    grill_completed: bool = Field(default=False, description="True when the grilling interview has completed or been skipped")
+    performance_interaction_id: Optional[str] = Field(None, description="Interactions API session id for performance agent")
+    security_interaction_id: Optional[str] = Field(None, description="Interactions API session id for security agent")
+    sre_interaction_id: Optional[str] = Field(None, description="Interactions API session id for sre agent")
 
 
 class DebateRoundEnvelope(BaseModel):

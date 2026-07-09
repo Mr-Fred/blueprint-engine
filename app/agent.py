@@ -39,6 +39,11 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
         concept = str(node_input)
         caveman_mode = True
 
+    if project_id and project_id != "default_proj":
+        ctx.state["project_id"] = project_id
+    elif "project_id" not in ctx.state:
+        ctx.state["project_id"] = project_id
+
     # Check explicit resume inputs first
     if isinstance(node_input, dict) and "judge_review" in node_input:
         return Event(output=node_input, route="review", custom_metadata={"state": ctx.state.to_dict()})

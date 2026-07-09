@@ -2,11 +2,14 @@ import os
 import uuid
 import asyncio
 import json
+import logging
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
+
+logger = logging.getLogger(__name__)
 
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
@@ -47,15 +50,31 @@ def sync_debate_state_from_event(project_id: str, event: Any):
     if state_update and isinstance(state_update, dict) and project_id in DEBATE_SESSIONS:
         current_round = state_update.get("current_round", 1)
         rounds = []
-        for i in range(1, current_round):
-            try:
-                round_data = FilesystemJail.read_project_file(project_id, f"round_{i}.json")
-                rounds.append(DebateRound.model_validate_json(round_data))
-            except Exception:
-                pass
+
+        raw_history = state_update.get("rounds_history")
+        if isinstance(raw_history, list) and len(raw_history) > 0:
+            for item in raw_history:
+                try:
+                    if isinstance(item, dict):
+                        rounds.append(DebateRound.model_validate(item))
+                    elif isinstance(item, DebateRound):
+                        rounds.append(item)
+                    elif isinstance(item, str):
+                        rounds.append(DebateRound.model_validate_json(item))
+                except Exception as e:
+                    logger.error(f"Failed parsing round from state_update: {e}")
+
+        if not rounds:
+            for i in range(1, current_round):
+                try:
+                    round_data = FilesystemJail.read_project_file(project_id, f"round_{i}.json")
+                    rounds.append(DebateRound.model_validate_json(round_data))
+                except Exception:
+                    pass
         
-        DEBATE_SESSIONS[project_id].current_round = state_update.get("current_round", 1)
-        DEBATE_SESSIONS[project_id].rounds_history = rounds
+        DEBATE_SESSIONS[project_id].current_round = current_round
+        if rounds or current_round == 1:
+            DEBATE_SESSIONS[project_id].rounds_history = rounds
         DEBATE_SESSIONS[project_id].consensus_achieved = state_update.get("consensus_achieved", False)
         
         if "final_prd" in state_update:
