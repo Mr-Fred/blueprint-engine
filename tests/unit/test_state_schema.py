@@ -9,6 +9,7 @@ def test_debate_state_declares_all_required_keys():
         "project_id",
         "concept",
         "current_round",
+        "max_rounds",
         "rounds_history",
         "grill_history",
         "grill_completed",

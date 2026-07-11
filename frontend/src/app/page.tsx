@@ -4,6 +4,7 @@ import { Cpu } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { MADEngineProvider, useMADEngine } from "../context/MADEngineContext";
 import { MADEngineHeader } from "../components/MADEngineHeader";
+import { MADEngineHarnessBar } from "../components/MADEngineHarnessBar";
 import { MADEngineLauncher } from "../components/MADEngineLauncher";
 import { MADEngineRegistry } from "../components/MADEngineRegistry";
 import { MADEngineArena } from "../components/MADEngineArena";
@@ -27,9 +28,10 @@ function MADEngineLayout() {
   return (
     <main className="h-screen overflow-hidden bg-[#090a10] bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(99,102,241,0.12),rgba(255,255,255,0))] text-slate-100 flex flex-col font-sans">
       <MADEngineHeader />
+      <MADEngineHarnessBar />
       
       {/* Main Grid Layout */}
-      <div className="flex-1 min-h-0 overflow-hidden p-6 max-w-[1800px] w-full mx-auto h-[calc(100vh-85px)]">
+      <div className="flex-1 min-h-0 overflow-hidden p-6 max-w-[1800px] w-full mx-auto h-[calc(100vh-125px)]">
         <Group orientation="horizontal" className="h-full">
           
           {/* Left column - Setup & Project List */}

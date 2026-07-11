@@ -55,3 +55,37 @@ def test_sync_debate_state_preserves_rounds_history_from_state_update():
     )
     sync_debate_state_from_event(project_id, empty_event)
     assert len(DEBATE_SESSIONS[project_id].rounds_history) == 1, "Should not wipe out existing rounds_history"
+
+
+def test_sync_debate_state_syncs_requirements_and_grill_completed():
+    project_id = "test_req_sync_proj"
+    DEBATE_SESSIONS[project_id] = DebateState(
+        project_id=project_id,
+        concept="Scale Python backend on GCP",
+        current_round=1,
+        rounds_history=[]
+    )
+
+    event = DummyEvent(
+        custom_metadata={
+            "state": {
+                "current_round": 1,
+                "grill_completed": True,
+                "requirements": {
+                    "preferred_tech_stack": ["Python", "FastAPI"],
+                    "cloud_provider": "GCP",
+                    "architectural_pattern": "Microservices",
+                    "target_rps": 1000,
+                    "budget_tier": "Enterprise HA",
+                    "compliance_frameworks": ["SOC2"],
+                    "core_use_cases": ["Scale Python backend on GCP"]
+                }
+            }
+        }
+    )
+
+    sync_debate_state_from_event(project_id, event)
+    assert DEBATE_SESSIONS[project_id].grill_completed is True
+    assert DEBATE_SESSIONS[project_id].requirements is not None
+    assert DEBATE_SESSIONS[project_id].requirements.cloud_provider == "GCP"
+    assert "Python" in DEBATE_SESSIONS[project_id].requirements.preferred_tech_stack

@@ -27,8 +27,14 @@ export function useDebateStream({ onStateUpdate, onFetchState }: UseDebateStream
   }, []);
 
   const processSSEEvent = useCallback((rawData: any, projectId: string, closeStream: () => void) => {
-    // Detect ADK 2.0 RequestInput suspension
     if (rawData.request_input) {
+      if (rawData.state) {
+        onStateUpdate(rawData.state);
+      } else {
+        onFetchState(projectId);
+      }
+      setIsStreaming(false);
+      setLiveAgent(null);
       setPendingInput({
         name: rawData.request_input.name,
         description: rawData.request_input.description

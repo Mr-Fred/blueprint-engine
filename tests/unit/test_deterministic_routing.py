@@ -1,7 +1,6 @@
 import pytest
 
-from app.agents.judge.agent import should_synthesize_or_continue
-from app.agents.performance.agent import should_exit_grill
+from app.harness.moderator import should_exit_grill, should_synthesize_or_continue
 from app.types import PillarScores
 
 

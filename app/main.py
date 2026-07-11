@@ -18,7 +18,7 @@ from google.adk.events.request_input import RequestInput
 from google.genai import types
 
 from app.utils import FilesystemJail
-from app.types import DebateState, DebateRound
+from app.types import DebateState, DebateRound, RequirementsSchema
 from app.agent import root_agent
 
 app = FastAPI(
@@ -41,7 +41,7 @@ DEBATE_SESSIONS: Dict[str, DebateState] = {}
 PROJECT_SESSIONS: Dict[str, str] = {}
 GLOBAL_SESSION_SERVICE = DatabaseSessionService(db_url="sqlite+aiosqlite:///.agents/sessions.db")
 
-def sync_debate_state_from_event(project_id: str, event: Any):
+def sync_debate_state_from_event(project_id: str, event: Any):  
     """Helper to maintain separation of concerns: updates global state from emitted ADK events."""
     event_dict = event.model_dump() if hasattr(event, "model_dump") else getattr(event, "__dict__", {})
     custom_meta = event_dict.get("custom_metadata") or {}
@@ -84,10 +84,35 @@ def sync_debate_state_from_event(project_id: str, event: Any):
             
         if "grill_history" in state_update:
             DEBATE_SESSIONS[project_id].grill_history = state_update["grill_history"]
-            
+        if "grill_completed" in state_update:
+            DEBATE_SESSIONS[project_id].grill_completed = state_update["grill_completed"]
+        if "requirements" in state_update and state_update["requirements"]:
+            req_data = state_update["requirements"]
+            try:
+                if isinstance(req_data, dict):
+                    DEBATE_SESSIONS[project_id].requirements = RequirementsSchema.model_validate(req_data)
+                elif isinstance(req_data, RequirementsSchema):
+                    DEBATE_SESSIONS[project_id].requirements = req_data
+            except Exception as e:
+                logger.warning(f"Failed parsing requirements: {e}")
+
         proposal = state_update.get("temp:latest_proposal") or state_update.get("latest_proposal")
         if proposal:
             DEBATE_SESSIONS[project_id].latest_proposal = proposal
+
+        if "epistemic_scratchpad" in state_update and state_update["epistemic_scratchpad"]:
+            DEBATE_SESSIONS[project_id].epistemic_scratchpad = state_update["epistemic_scratchpad"]
+        else:
+            try:
+                from app.harness.ledger import EpistemicScratchpad
+                sp = EpistemicScratchpad.load(project_id)
+                if sp.verified_facts:
+                    DEBATE_SESSIONS[project_id].epistemic_scratchpad = sp.model_dump()
+            except Exception:
+                pass
+            
+        if "journey_trace" in state_update and state_update["journey_trace"]:
+            DEBATE_SESSIONS[project_id].journey_trace = state_update["journey_trace"]
             
         try:
             FilesystemJail.write_project_file(project_id, "state.json", DEBATE_SESSIONS[project_id].model_dump_json())
@@ -140,28 +165,66 @@ class ProjectInfoResponse(BaseModel):
 
 def resolve_project_artifacts(pid: str):
     """
-    Safely resolves placeholder strings like '[Saved to PRD.md]' or missing fields by reading actual markdown files from disk.
+    Safely resolves placeholder strings or missing fields by reading actual multi-file artifacts from disk.
     """
     if pid not in DEBATE_SESSIONS:
         return
     state = DEBATE_SESSIONS[pid]
     try:
+        if not state.final_artifacts:
+            state.final_artifacts = {}
+
+        # Standard ADK 2.0 layout tracks
+        prd_subpath = FilesystemJail.resolve_jailed_path(pid, "docs/prd.md")
         prd_path = FilesystemJail.resolve_jailed_path(pid, "PRD.md")
         arch_path = FilesystemJail.resolve_jailed_path(pid, "ARCHITECTURE.md")
-        
-        if (state.final_prd == "[Saved to PRD.md]" or not state.final_prd) and prd_path.exists():
-            try:
-                state.final_prd = prd_path.read_text(encoding="utf-8")
-            except Exception as e:
-                print(f"Failed reading PRD.md for {pid}: {e}")
-                
-        if (state.final_architecture == "[Saved to ARCHITECTURE.md]" or not state.final_architecture) and arch_path.exists():
-            try:
-                state.final_architecture = arch_path.read_text(encoding="utf-8")
-            except Exception as e:
-                print(f"Failed reading ARCHITECTURE.md for {pid}: {e}")
-                
-        state.consensus_achieved = prd_path.exists() or arch_path.exists()
+        topo_path = FilesystemJail.resolve_jailed_path(pid, "diagrams/topology.mmd")
+        risk_path = FilesystemJail.resolve_jailed_path(pid, "security/risk_matrix.json")
+
+        if prd_subpath.exists():
+            content = prd_subpath.read_text(encoding="utf-8")
+            state.final_prd = content
+            state.final_artifacts["docs/prd.md"] = content
+        elif prd_path.exists():
+            content = prd_path.read_text(encoding="utf-8")
+            state.final_prd = content
+            state.final_artifacts["PRD.md"] = content
+
+        if arch_path.exists():
+            content = arch_path.read_text(encoding="utf-8")
+            state.final_architecture = content
+            state.final_artifacts["ARCHITECTURE.md"] = content
+
+        if topo_path.exists():
+            content = topo_path.read_text(encoding="utf-8")
+            state.final_topology = content
+            state.final_artifacts["diagrams/topology.mmd"] = content
+
+        if risk_path.exists():
+            content = risk_path.read_text(encoding="utf-8")
+            state.final_risk_matrix = content
+            state.final_artifacts["security/risk_matrix.json"] = content
+
+        # Also discover any additional synthesized files in the project directory
+        out_dir = FilesystemJail.resolve_jailed_path(pid, "")
+        if out_dir.exists():
+            for p in out_dir.rglob("*"):
+                if p.is_file() and p.name not in {"state.json", "architecture_ledger.json", "epistemic_scratchpad.json"} and not p.name.startswith("round_"):
+                    rel = p.relative_to(out_dir).as_posix()
+                    if rel not in state.final_artifacts:
+                        try:
+                            state.final_artifacts[rel] = p.read_text(encoding="utf-8")
+                        except Exception:
+                            pass
+
+        state.consensus_achieved = (
+            state.consensus_achieved
+            or arch_path.exists()
+            or prd_path.exists()
+            or prd_subpath.exists()
+            or topo_path.exists()
+            or risk_path.exists()
+        )
     except Exception as e:
         print(f"Failed resolving paths for project {pid}: {e}")
 
@@ -265,6 +328,7 @@ async def stream_adk_events(
             session_id=project_id,
             run_config=RunConfig(streaming_mode=StreamingMode.SSE),
         ):
+            sync_debate_state_from_event(project_id, event)
             is_req_input = False
             if getattr(event, "content", None) and event.content.parts:
                 for part in event.content.parts:
@@ -284,28 +348,37 @@ async def stream_adk_events(
                             "request_input": {
                                 "name": name,
                                 "description": message_desc,
-                            }
+                            },
+                            "state": DEBATE_SESSIONS[project_id].model_dump()
                         }
                         yield f"data: {json.dumps(req_data)}\n\n"
                         break
 
             if not is_req_input:
-                sync_debate_state_from_event(project_id, event)
 
                 event_dict = event.model_dump() if hasattr(event, "model_dump") else getattr(event, "__dict__", {})
                 agent_name = None
                 raw_path = getattr(event, "node_path", None) or event_dict.get("node_path")
+                if not raw_path:
+                    node_info = getattr(event, "node_info", None) or event_dict.get("node_info")
+                    if isinstance(node_info, dict):
+                        raw_path = node_info.get("path")
+                    elif node_info:
+                        raw_path = getattr(node_info, "path", None)
+                if not raw_path:
+                    raw_path = getattr(event, "author", None) or event_dict.get("author")
+
                 if raw_path:
                     path_str = str(raw_path).lower()
-                    if "performance_agent_node" in path_str or "grill_node" in path_str:
+                    if "performance_agent_node" in path_str or "grill_node" in path_str or "performance" in path_str:
                         agent_name = "Performance & Scaling Architect"
-                    elif "security_agent_node" in path_str:
+                    elif "security_agent_node" in path_str or "security" in path_str:
                         agent_name = "Security & Resilience Auditor"
-                    elif "sre_agent_node" in path_str:
+                    elif "sre_agent_node" in path_str or "sre" in path_str:
                         agent_name = "SRE & Maintainability Lead"
-                    elif "evaluate_and_score_node" in path_str:
+                    elif "evaluate_and_score_node" in path_str or "judge" in path_str:
                         agent_name = "Master Architect Judge"
-                    elif "synthesis_node" in path_str:
+                    elif "synthesis_node" in path_str or "synthesizer" in path_str:
                         agent_name = "Synthesizing Final Assets..."
 
                 if agent_name:
@@ -423,6 +496,55 @@ async def resume_debate(project_id: str, req: ResumeRequest):
     )
     return StreamingResponse(stream_adk_events(runner, project_id, message=message), media_type="text/event-stream")
 
+
+@app.get("/api/projects/{project_id}/trace")
+async def get_project_trace(project_id: str):
+    """
+    GET /api/projects/{project_id}/trace: Returns the chronological end-to-end telemetry spans for a debate session.
+    """
+    ensure_project_loaded(project_id)
+    if project_id not in DEBATE_SESSIONS:
+        raise HTTPException(status_code=404, detail="Project not found")
+    session_state = DEBATE_SESSIONS[project_id]
+    state_dict = session_state.model_dump()
+    journey = state_dict.get("journey_trace", [])
+    return {"project_id": project_id, "trace_count": len(journey), "spans": journey}
+
+
+@app.post("/api/projects/{project_id}/intermission")
+async def submit_intermission_directive(project_id: str, directive: Dict[str, Any]):
+    """
+    POST /api/projects/{project_id}/intermission: Submits a HITL Intermission action
+    (STEER, CONTINUE, FORCE_SYNTHESIZE, CANCEL) and resumes the debate stream.
+    """
+    ensure_project_loaded(project_id)
+    if project_id not in DEBATE_SESSIONS:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from app.harness.intermission import IntermissionRouter, IntermissionBranch
+    parsed = IntermissionRouter.parse_input(directive)
+
+    session_state = DEBATE_SESSIONS[project_id]
+    session_state.intermission_action = parsed.action.value
+    session_state.intermission_paused = False
+
+    if parsed.action == IntermissionBranch.FORCE_SYNTHESIZE:
+        session_state.force_synthesis_flag = True
+
+    try:
+        FilesystemJail.write_project_file(project_id, "state.json", session_state.model_dump_json())
+    except Exception as e:
+        logger.error(f"Failed to persist state during intermission action: {e}")
+
+    runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
+    resume_payload = {"intermission_directive": parsed.model_dump()}
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=json.dumps(resume_payload))],
+    )
+    return StreamingResponse(stream_adk_events(runner, project_id, message=message), media_type="text/event-stream")
+
+
 @app.get("/api/projects/{project_id}/state", response_model=DebateState)
 async def get_project_state(project_id: str):
     """
@@ -433,6 +555,27 @@ async def get_project_state(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
         
     return DEBATE_SESSIONS[project_id]
+
+
+@app.get("/api/projects/{project_id}/artifacts")
+async def get_project_artifacts(project_id: str) -> Dict[str, Any]:
+    """
+    GET /api/projects/{project_id}/artifacts: Fetches map of all synthesized multi-file ADK 2.0 tracks.
+    """
+    ensure_project_loaded(project_id)
+    if project_id not in DEBATE_SESSIONS:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = DEBATE_SESSIONS[project_id]
+    return {
+        "project_id": project_id,
+        "artifacts": state.final_artifacts or {},
+        "final_prd": state.final_prd,
+        "final_architecture": state.final_architecture,
+        "final_topology": state.final_topology,
+        "final_risk_matrix": state.final_risk_matrix,
+    }
+
 
 class ToggleCavemanRequest(BaseModel):
     caveman_mode: bool = Field(..., description="The desired boolean state for caveman mode")

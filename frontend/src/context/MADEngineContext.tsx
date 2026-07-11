@@ -34,6 +34,7 @@ interface MADEngineContextValue {
   fetchProjectState: (projectId: string) => Promise<void>;
   startSSEResumeStream: (projectId: string) => void;
   toggleCavemanMode: (newMode?: boolean) => Promise<void>;
+  sendIntermissionAction: (action: string, note?: string) => Promise<void>;
 }
 
 const MADEngineContext = createContext<MADEngineContextValue | undefined>(undefined);
@@ -193,6 +194,20 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeProject, streamHandleResume]);
 
+  const sendIntermissionAction = useCallback(async (action: string, note?: string) => {
+    if (!activeProject) return;
+    try {
+      await fetch(`${API_BASE}/api/projects/${activeProject.project_id}/intermission`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, steering_note: note }),
+      });
+      await handleResumeContext(action);
+    } catch (e) {
+      console.error("Failed to send intermission action:", e);
+    }
+  }, [activeProject, handleResumeContext]);
+
   const contextValue = useMemo(() => ({
     conceptInput,
     setConceptInput,
@@ -217,12 +232,14 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
     handleDeleteProject,
     fetchProjectState,
     startSSEResumeStream,
-    toggleCavemanMode
+    toggleCavemanMode,
+    sendIntermissionAction
   }), [
     conceptInput, activeProject, projectsList, isMounted, cavemanMode, liveRound, 
     isStreaming, streamError, liveAgent, liveStreams, pendingInput, 
     resumeText, isResuming, handleStartDebate, handleResumeContext, 
-    handleDeleteProject, fetchProjectState, startSSEResumeStream, toggleCavemanMode
+    handleDeleteProject, fetchProjectState, startSSEResumeStream, toggleCavemanMode,
+    sendIntermissionAction
   ]);
 
   return (
