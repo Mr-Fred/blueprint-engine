@@ -13,7 +13,11 @@ from app.agents.performance.prompt import get_performance_prompt
 from app.config import settings
 from app.shared_state import ACTIVE_DIRECTIVES
 from app.types import DebateRound, DebateRoundEnvelope
-from app.utils import load_matching_skills, extract_stream_chunk_text, extract_interaction_id
+from app.utils import (
+    extract_interaction_id,
+    extract_stream_chunk_text,
+    load_matching_skills,
+)
 
 logger = logging.getLogger(__name__)
 

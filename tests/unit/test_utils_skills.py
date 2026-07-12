@@ -35,14 +35,14 @@ def test_load_matching_skills(tmp_path: Path):
 
     # 3. Test matching on auth tokens
     auth_result = load_matching_skills(tmp_path, "We need to implement secure JWT and OAuth2 authentication.")
-    assert "--- SKILL: auth-patterns ---" in auth_result
-    assert "Always use short-lived JWTs" in auth_result
+    assert "- **auth-patterns**:" in auth_result
+    assert 'read_skill("auth-patterns")' in auth_result
     assert "db-design" not in auth_result
 
     # 4. Test matching on DB tokens
     db_result = load_matching_skills(tmp_path, "Let's optimize our PostgreSQL indexing strategies.")
-    assert "--- SKILL: db-design ---" in db_result
-    assert "Always index foreign keys" in db_result
+    assert "- **db-design**:" in db_result
+    assert 'read_skill("db-design")' in db_result
     assert "auth-patterns" not in db_result
 
     # 5. Test real agent skills directory matching

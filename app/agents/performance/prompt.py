@@ -22,7 +22,14 @@ Current Round: {current_round}"""
 
     if history:
         last_round = history[-1]
-        prompt += f"\n\nHere is the previous proposal draft:\n{last_round.get('proposal_draft', '')}\n\nAnd here is the security/DevOps critique from the last round:\n{last_round.get('critique', '')}"
+        prompt += (
+            f"\n\n--- PREVIOUS ROUND PROPOSAL ---\n{last_round.get('proposal_draft', '')}"
+            f"\n\n--- AUDITORS' STEP-BY-STEP HARDENING & CRITIQUE ---\n{last_round.get('critique', '')}"
+            "\n\nCRITICAL AUDIT REMEDIATION REQUIREMENT:\n"
+            "You MUST systematically apply and address every step-by-step hardening instruction "
+            "provided above by the Security and SRE auditors. Explicitly describe how your refined "
+            "blueprint incorporates their required safeguards, circuit breakers, IAM controls, and observability SLOs."
+        )
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize addressing this judge feedback in your refined design proposal with highest precedence."

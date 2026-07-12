@@ -29,4 +29,10 @@ Provide your SRE review focusing STRICTLY on:
     if skills_context:
         prompt += f"\n\n--- DOMAIN SKILLS & RELIABILITY PATTERNS ---\nUse the following loaded skills to formulate concrete observability, resilience, and DevOps prescriptions:\n{skills_context}"
 
+    prompt += (
+        "\n\nCRITICAL HARDENING REQUIREMENT:\n"
+        "In your `detailed_critique`, you MUST explicitly formulate clear, numbered, step-by-step SRE hardening "
+        "and resilience instructions (e.g., circuit breaker configs, retry policies, SLO definitions) "
+        "so the Lead Architect knows exactly what to add or modify in the next debate round."
+    )
     return prompt

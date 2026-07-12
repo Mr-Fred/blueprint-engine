@@ -1,8 +1,8 @@
-import os
+import json
 import shutil
 from pathlib import Path
-import json
-from typing import Any, Optional
+from typing import Any
+
 
 def parse_node_input(node_input: Any) -> Any:
     """Safely extracts and parses node input from ADK Content/Part objects or strings into dictionaries or strings."""
@@ -24,7 +24,7 @@ class FilesystemJail:
     """Utility class to enforce strictly jailed filesystem sandboxing on a per-project basis.
     All file operations are contained within the `outputs/[project_id]/` subdirectory.
     """
-    
+
     BASE_OUTPUT_DIR = Path("C:/Users/Fred/Documents/antigravity/blueprint-engine/outputs").resolve()
 
     @classmethod
@@ -35,11 +35,11 @@ class FilesystemJail:
         # Sanitize project_id to prevent any sneaky path injection
         sanitized_id = Path(project_id).name
         project_dir = (cls.BASE_OUTPUT_DIR / sanitized_id).resolve()
-        
+
         # Double check containment
         if not project_dir.is_relative_to(cls.BASE_OUTPUT_DIR):
             raise PermissionError(f"Security Violation: Project directory '{project_dir}' escapes jail perimeter.")
-            
+
         project_dir.mkdir(parents=True, exist_ok=True)
         return project_dir
 
@@ -50,14 +50,14 @@ class FilesystemJail:
         """
         project_dir = cls.get_project_dir(project_id)
         target_path = (project_dir / relative_filename).resolve()
-        
+
         # Verify target path is strictly contained within the project directory
         if not target_path.is_relative_to(project_dir):
             raise PermissionError(
                 f"Security Violation: Target path '{target_path}' attempts to traverse outside of the project "
                 f"jail folder '{project_dir}'."
             )
-            
+
         return target_path
 
     @classmethod
@@ -92,6 +92,7 @@ def load_matching_skills(skills_dir: Path, text_to_match: str = "") -> str:
         return ""
 
     import re
+
     from app.harness.skills_registry import JITSkillRegistry
 
     matched_skills = []
@@ -117,13 +118,17 @@ def load_matching_skills(skills_dir: Path, text_to_match: str = "") -> str:
         )
 
         if is_match:
-            try:
-                content = file_path.read_text(encoding="utf-8")
-                matched_skills.append(f"\n--- SKILL: {skill_name} ---\n{content.strip()}\n")
-            except Exception:
-                continue
+            desc = meta.get("description", "").strip()
+            matched_skills.append(f"- **{skill_name}**: {desc} (Invoke tool `read_skill(\"{skill_name}\")` to inspect full markdown instructions)")
 
-    return "\n".join(matched_skills)
+    if not matched_skills:
+        return ""
+
+    header = (
+        "Available Domain Skills (Lightweight Index):\n"
+        "You can dynamically invoke `read_skill(skill_name)` or `search_skills(query)` to read complete markdown instructions on demand:\n"
+    )
+    return header + "\n".join(matched_skills)
 
 
 def extract_stream_chunk_text(chunk: Any) -> str:
@@ -174,7 +179,7 @@ def extract_stream_chunk_text(chunk: Any) -> str:
     return ""
 
 
-def extract_interaction_id(chunk: Any) -> Optional[str]:
+def extract_interaction_id(chunk: Any) -> str | None:
     """Extracts server-side interaction ID from completed interaction SSE events or chunks."""
     chunk_id = getattr(chunk, "id", None)
     if chunk_id:

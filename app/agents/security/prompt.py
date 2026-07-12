@@ -29,4 +29,10 @@ Provide your security review focusing STRICTLY on:
     if skills_context:
         prompt += f"\n\n--- DOMAIN SKILLS & MITIGATION PATTERNS ---\nUse the following loaded skills to formulate concrete mitigation plans for any identified vulnerabilities:\n{skills_context}"
 
+    prompt += (
+        "\n\nCRITICAL HARDENING REQUIREMENT:\n"
+        "In your `stride_threat_register` (`mitigation_status`) and your `detailed_critique`, "
+        "you MUST explicitly formulate clear, numbered, step-by-step architectural hardening instructions "
+        "so the Lead Architect knows exactly what components, patterns, or safeguards to add in the next debate round."
+    )
     return prompt
