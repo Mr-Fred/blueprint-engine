@@ -20,6 +20,9 @@ from google.genai import types
 from app.utils import FilesystemJail
 from app.types import DebateState, DebateRound, RequirementsSchema
 from app.agent import root_agent
+from app.app_utils.telemetry import setup_telemetry
+
+setup_telemetry()
 
 app = FastAPI(
     title="MAD Engine (Multi-Agent Architect Debate System)",
@@ -521,7 +524,7 @@ async def submit_intermission_directive(project_id: str, directive: Dict[str, An
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from app.harness.intermission import IntermissionRouter, IntermissionBranch
+    from app.harness.intermission import IntermissionBranch, IntermissionRouter
     parsed = IntermissionRouter.parse_input(directive)
 
     session_state = DEBATE_SESSIONS[project_id]
@@ -573,7 +576,28 @@ async def get_project_artifacts(project_id: str) -> Dict[str, Any]:
         "final_prd": state.final_prd,
         "final_architecture": state.final_architecture,
         "final_topology": state.final_topology,
-        "final_risk_matrix": state.final_risk_matrix,
+    }
+
+
+@app.get("/api/projects/{project_id}/trace")
+async def get_project_trace(project_id: str) -> Dict[str, Any]:
+    """
+    GET /api/projects/{project_id}/trace: Serves standard OpenTelemetry span JSONs and journey traces for the UI trace viewer.
+    """
+    ensure_project_loaded(project_id)
+    if project_id not in DEBATE_SESSIONS:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from app.harness.tracing import DebateTracer
+    otel_spans = DebateTracer.get_otel_spans(project_id)
+    state = DEBATE_SESSIONS[project_id]
+
+    return {
+        "project_id": project_id,
+        "otel_spans": otel_spans,
+        "spans": otel_spans,
+        "span_count": len(otel_spans),
+        "trace_count": len(otel_spans),
     }
 
 
@@ -596,3 +620,42 @@ async def toggle_caveman_mode(project_id: str, req: ToggleCavemanRequest):
         logger.error(f"Failed to persist state during caveman toggle: {e}")
         
     return DEBATE_SESSIONS[project_id]
+
+
+@app.get("/api/dev/gemini-inspection-logs")
+async def get_gemini_inspection_logs(limit: int = 50, call_type: str | None = None) -> Dict[str, Any]:
+    """
+    GET /api/dev/gemini-inspection-logs: Reads and returns recent Gemini response inspection entries
+    from 'logs/gemini_inspection.jsonl'.
+    """
+    import json
+    from pathlib import Path
+
+    log_file = Path("logs/gemini_inspection.jsonl")
+    if not log_file.exists():
+        return {"entries": [], "total": 0, "limit": limit}
+
+    entries: list[dict[str, Any]] = []
+    try:
+        with log_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if call_type and entry.get("call_type") != call_type:
+                        continue
+                    entries.append(entry)
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.error(f"Error reading gemini_inspection logs: {e}")
+
+    # Return the most recent entries up to 'limit'
+    recent_entries = entries[-limit:]
+    return {
+        "entries": recent_entries,
+        "total_matched": len(entries),
+        "limit": limit,
+    }

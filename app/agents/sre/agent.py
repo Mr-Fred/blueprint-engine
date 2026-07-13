@@ -1,26 +1,30 @@
 import asyncio
-import os
 import logging
+import os
 from pathlib import Path
 from typing import Any
+
 from google import genai
-from google.genai import types
-from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events.event import Event
+from google.adk.workflow import node
+from google.genai import types
 
-from app.config import settings
-from app.shared_state import ACTIVE_DIRECTIVES
-from app.utils import load_matching_skills, parse_node_input, extract_stream_chunk_text, extract_interaction_id
 from app.agents.sre.prompt import get_sre_prompt
+from app.config import settings
+from app.types import SRERubricEvaluation
+from app.utils import (
+    extract_interaction_id,
+    extract_stream_chunk_text,
+    load_matching_skills,
+    parse_node_input,
+)
 
 logger = logging.getLogger(__name__)
 
 def get_genai_client() -> genai.Client:
     """Initializes and returns the Google Gen AI client based on configuration settings."""
     return settings.get_genai_client()
-
-from app.types import SRERubricEvaluation
 
 @node
 async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
@@ -30,15 +34,15 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
     project_id = ctx.state.get("project_id", "default_proj")
     proposal = node_input.get("proposal", str(node_input)) if isinstance(node_input, dict) else str(node_input)
     
-    # Extract any active judge feedback directive from shared registries or state
-    judge_directive = ACTIVE_DIRECTIVES.get(project_id) or ctx.state.get("latest_judge_directive", None)
+    # Extract any active judge feedback directive from state
+    judge_directive = ctx.state.get("latest_judge_directive", None)
 
     # Dynamically load matching domain skills from local skills/ directory without crossing folder boundaries
     skills_dir = Path(__file__).parent / "skills"
     caveman_trigger = " caveman mode" if ctx.state.get("caveman_mode", True) else ""
     matched_skills = load_matching_skills(skills_dir, f"{proposal}{caveman_trigger}")
 
-    prompt = get_sre_prompt(proposal, judge_directive=judge_directive, skills_context=matched_skills)
+    prompt = get_sre_prompt(proposal, judge_directive=judge_directive, skills_context=matched_skills, project_id=project_id)
 
     prompt = (
         f"You MUST return a valid JSON payload matching the SRERubricEvaluation schema.\n"
@@ -48,7 +52,11 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
     )
 
     critique_text = ""
+    res: Any = None
     rubric: SRERubricEvaluation
+
+    from app.harness.tools import format_tools_for_interactions, get_harness_tools
+    harness_tools = get_harness_tools()
 
     if settings.mock_mode:
         rubric = SRERubricEvaluation(
@@ -66,12 +74,15 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
             response_stream = await client.aio.interactions.create(
                 model=settings.auditor_model_id,
                 input=prompt,
+                tools=format_tools_for_interactions(harness_tools),
                 stream=True,
                 store=True,
                 previous_interaction_id=previous_interaction_id,
-                response_format=SRERubricEvaluation,
+                response_format=SRERubricEvaluation.model_json_schema(),
             )
+            from app.utils import log_gemini_inspection
             async for chunk in response_stream:
+                log_gemini_inspection("interactions.create_chunk", settings.auditor_model_id, chunk, {"role": "sre"})
                 text = extract_stream_chunk_text(chunk)
                 if text:
                     critique_text += text
@@ -82,32 +93,40 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
             if not critique_text.strip():
                 raise ValueError("Empty stream returned from interactions API")
         except Exception as e:
-            logger.warning(f"Interactions API failed for sre agent ({e}), falling back to generate_content_stream.")
+            logger.warning(f"Interactions API failed for sre agent ({e}), falling back to stream_agent_with_tools.")
             try:
-                response_stream = await client.aio.models.generate_content_stream(
-                    model=settings.auditor_model_id,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=SRERubricEvaluation,
-                    ),
-                )
-                async for chunk in response_stream:
-                    text = extract_stream_chunk_text(chunk)
-                    if text:
-                        critique_text += text
-                        yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+                from app.harness.tools import stream_agent_with_tools
+                async for text in stream_agent_with_tools(
+                    client=client,
+                    model_id=settings.auditor_model_id,
+                    prompt=prompt,
+                    tools=harness_tools,
+                    response_schema=SRERubricEvaluation,
+                ):
+                    critique_text += text
+                    yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
             except Exception as stream_err:
-                logger.warning(f"generate_content_stream failed ({stream_err}), falling back to non-streaming generate_content.")
-                res = await client.aio.models.generate_content(
-                    model=settings.auditor_model_id,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=SRERubricEvaluation,
+                logger.warning(f"stream_agent_with_tools failed ({stream_err}).")
+
+            if not critique_text.strip():
+                logger.warning("Empty stream text for sre agent, running non-streaming text fallback with retry.")
+                from app.utils import call_with_retry_on_429, log_gemini_inspection
+                res = await call_with_retry_on_429(
+                    lambda: client.aio.models.generate_content(
+                        model=settings.auditor_model_id,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=SRERubricEvaluation,
+                        ),
                     ),
+                    max_retries=3,
+                    base_delay=3.0,
                 )
-                critique_text = res.text or ""
+                log_gemini_inspection("generate_content", settings.auditor_model_id, res, {"role": "sre"})
+                critique_text = getattr(res, "text", "") or ""
+                if not critique_text.strip():
+                    raise RuntimeError("SRE Auditor failed to generate evaluation rubric after retries.")
                 yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=critique_text)]))
 
         try:
@@ -137,6 +156,7 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
     else:
         output_payload = critique_text
 
+    from app.utils import extract_token_usage_dict
     from app.harness.tracing import DebateTracer
     DebateTracer.record_span(
         ctx=ctx,
@@ -149,6 +169,7 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
             "fault_tolerance_score": rubric.fault_tolerance_score,
             "observability_score": rubric.observability_score,
             "uptime_tier": rubric.estimated_uptime_tier,
+            **extract_token_usage_dict(res),
         },
     )
     state_dump = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)

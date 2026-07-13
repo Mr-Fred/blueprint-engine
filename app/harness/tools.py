@@ -153,7 +153,6 @@ def search_skills(query: str) -> str:
 
 def get_harness_tools() -> list:
     """Returns clean standalone Python functions wrapping HarnessToolRegistry and JITSkillRegistry."""
-    from app.harness.skills_registry import JITSkillRegistry
     return [
         lookup_architectural_pattern,
         check_owasp_stride_vector,
@@ -164,6 +163,91 @@ def get_harness_tools() -> list:
         read_skill,
         search_skills,
     ]
+
+
+async def stream_agent_with_tools(
+    client: Any,
+    model_id: str,
+    prompt: str,
+    tools: list,
+    max_tool_turns: int = 5,
+    response_schema: Any = None,
+):
+    """
+    Executes a multi-turn streaming tool-calling loop against Gemini.
+    When Gemini emits function_call chunks, executes the tools locally against HarnessToolRegistry
+    and feeds function_response back into the conversation until Gemini streams Markdown text.
+    Yields each text chunk as it arrives.
+    """
+    from google.genai import types
+    from app.utils import extract_stream_chunk_text
+
+    tool_map = {f.__name__: f for f in tools}
+    contents = [prompt]
+
+    for turn in range(max_tool_turns):
+        config_kwargs = {"tools": tools}
+        if response_schema:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = response_schema
+
+        config = types.GenerateContentConfig(**config_kwargs)
+        from app.utils import call_with_retry_on_429
+        response_stream = await call_with_retry_on_429(
+            lambda: client.aio.models.generate_content_stream(
+                model=model_id,
+                contents=contents,
+                config=config,
+            ),
+            max_retries=3,
+            base_delay=3.0,
+        )
+
+        turn_function_calls = []
+        from app.utils import log_gemini_inspection
+        async for chunk in response_stream:
+            log_gemini_inspection("generate_content_stream_chunk", model_id, chunk, {"turn": turn})
+            text = extract_stream_chunk_text(chunk)
+            if text:
+                yield text
+
+            candidates = getattr(chunk, "candidates", None)
+            if candidates:
+                for c in candidates:
+                    content = getattr(c, "content", None)
+                    parts = getattr(content, "parts", None) if content else None
+                    if parts:
+                        for p in parts:
+                            fc = getattr(p, "function_call", None)
+                            if fc and getattr(fc, "name", None):
+                                turn_function_calls.append((fc.name, dict(getattr(fc, "args", {}))))
+
+        if not turn_function_calls:
+            break
+
+        for fc_name, fc_args in turn_function_calls:
+            func = tool_map.get(fc_name)
+            if func:
+                try:
+                    res = func(**fc_args)
+                except Exception as e:
+                    res = f"Error executing tool {fc_name}: {str(e)}"
+            else:
+                res = f"Tool {fc_name} not found."
+
+            logger.info(f"Executed harness tool {fc_name}({fc_args}) -> {str(res)[:100]}")
+            contents.append(
+                types.Content(
+                    role="model",
+                    parts=[types.Part.from_function_call(name=fc_name, args=fc_args)],
+                )
+            )
+            contents.append(
+                types.Content(
+                    role="tool",
+                    parts=[types.Part.from_function_response(name=fc_name, response={"result": res})],
+                )
+            )
 
 
 

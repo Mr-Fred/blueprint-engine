@@ -19,6 +19,6 @@ When generating final project specifications, you MUST output structured file pa
 2. **`ARCHITECTURE.md`**:
    - Must contain a deep architectural blueprint covering Hexagonal / Clean Architecture boundaries, data storage schemas, API specifications, and observability patterns.
 3. **`diagrams/topology.mmd`**:
-   - Must contain valid, clean Mermaid.js diagram syntax illustrating the complete system architecture and component interactions. Do NOT wrap inside markdown backticks (` ```mermaid `)—output raw Mermaid syntax only.
+   - Must contain valid, clean Mermaid.js diagram syntax illustrating the complete system architecture and component interactions. Do NOT wrap inside markdown backticks (` ```mermaid `)—output raw Mermaid syntax only. When defining `classDef` styles, use rich dark-theme colors with explicit high-contrast text color (e.g. `classDef backend fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ecfdf5;`). Never use unreadable pastel fills (`#dfd`, `#fdd`, `#bbf`).
 4. **`security/risk_matrix.json`**:
    - Must contain a valid, machine-readable JSON array of STRIDE threat mappings consolidated from the debate rounds. Each entry must specify `category`, `threat_title`, `component`, `severity`, and `mitigation_status`.

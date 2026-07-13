@@ -1,13 +1,14 @@
 import json
 import logging
-from enum import Enum
-from typing import Any, Dict, Optional
+from enum import StrEnum
+from typing import Any, Optional
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 
-class IntermissionBranch(str, Enum):
+class IntermissionBranch(StrEnum):
     """The 4 deterministic HITL Intermission actions."""
     STEER = "STEER"
     CONTINUE = "CONTINUE"
@@ -18,7 +19,7 @@ class IntermissionBranch(str, Enum):
 class IntermissionDirective(BaseModel):
     """Structured HITL directive parsed from intermission resume input."""
     action: IntermissionBranch = Field(default=IntermissionBranch.CONTINUE, description="Branch choice")
-    steering_note: Optional[str] = Field(None, description="Human steering instructions if action is STEER")
+    steering_note: str | None = Field(None, description="Human steering instructions if action is STEER")
 
 
 class IntermissionRouter:
@@ -61,7 +62,7 @@ class IntermissionRouter:
         return IntermissionDirective(action=IntermissionBranch.CONTINUE)
 
     @staticmethod
-    def _to_directive(action_str: str, note: Optional[str]) -> IntermissionDirective:
+    def _to_directive(action_str: str, note: str | None) -> IntermissionDirective:
         try:
             branch = IntermissionBranch(action_str)
         except ValueError:

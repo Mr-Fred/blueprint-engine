@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from google import genai
 from google.adk.agents.context import Context
@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from app.agents.judge.prompt import get_judge_evaluation_prompt
 from app.config import settings
 from app.harness.moderator import should_synthesize_or_continue
-from app.shared_state import ACTIVE_DIRECTIVES
 from app.types import DebateRound, PillarScores
 from app.utils import FilesystemJail, load_matching_skills, parse_node_input
 
@@ -95,6 +94,10 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
 
     current_round = ctx.state.get("current_round", 1)
 
+    from app.harness.tools import get_harness_tools
+    harness_tools = get_harness_tools()
+
+    response: Any = None
     if settings.mock_mode:
         sec_score = 0.80 if current_round == 1 else 0.89
         result_data = ScoreResult(
@@ -112,17 +115,25 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
     else:
         text_content = ""
         try:
-            response = await client.aio.models.generate_content(
-                model=settings.judge_model_id,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ScoreResult,
+            from app.utils import call_with_retry_on_429
+            response = await call_with_retry_on_429(
+                lambda: client.aio.models.generate_content(
+                    model=settings.judge_model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ScoreResult,
+                        tools=harness_tools,
+                    ),
                 ),
+                max_retries=3,
+                base_delay=3.0,
             )
+            from app.utils import log_gemini_inspection
+            log_gemini_inspection("generate_content", settings.judge_model_id, response, {"role": "judge"})
             text_content = response.text or ""
         except Exception as e:
-            logger.warning(f"generate_content failed in evaluate_and_score_node: {e}")
+            logger.warning(f"generate_content failed in evaluate_and_score_node after retries: {e}")
 
         if not text_content:
             logger.warning("Empty response from evaluate_and_score_node model evaluation, assigning heuristic scores.")
@@ -172,7 +183,9 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
     )
     ctx.state["consensus_achieved"] = consensus
 
+    from app.utils import extract_token_usage_dict
     from app.harness.tracing import DebateTracer
+    token_meta = extract_token_usage_dict(response)
     DebateTracer.record_span(
         ctx=ctx,
         span_name="ROUND_EVALUATED",
@@ -182,6 +195,7 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
             "scores": scores.model_dump(),
             "consensus_achieved": consensus,
             "route": route_name,
+            **token_meta,
         },
     )
 
@@ -222,10 +236,25 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
         content=types.Content(role="model", parts=[types.Part.from_text(text="Round complete, awaiting judge review")]),
         custom_metadata={"state": ctx.state.to_dict()},
     )
-    yield RequestInput(
+    user_response = yield RequestInput(
         payload={"name": "judge_review"},
         message=message_text,
     )
 
-    yield Event(output="Waiting for judge review", route="review", custom_metadata={"state": ctx.state.to_dict()})
+    from app.harness.intermission import IntermissionRouter, IntermissionBranch
+    directive = IntermissionRouter.parse_input(user_response)
+    if directive.action == IntermissionBranch.CANCEL:
+        logger.info("Debate cancelled by user at intermission.")
+        yield Event(output="Debate cancelled", custom_metadata={"state": ctx.state.to_dict()})
+        return
+    elif directive.action == IntermissionBranch.FORCE_SYNTHESIZE:
+        logger.info("Force synthesize requested by user at intermission.")
+        ctx.state["consensus_achieved"] = True
+        yield Event(output=ctx.state.to_dict(), route="synthesize", custom_metadata={"state": ctx.state.to_dict()})
+        return
+    elif directive.action == IntermissionBranch.STEER:
+        logger.info(f"Steering debate with note: {directive.steering_note}")
+        ctx.state["latest_judge_directive"] = directive.steering_note
+
+    yield Event(output="Continuing debate round", route="continue", custom_metadata={"state": ctx.state.to_dict()})
     return

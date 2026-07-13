@@ -11,7 +11,6 @@ from google.genai import types
 
 from app.agents.security.prompt import get_security_prompt
 from app.config import settings
-from app.shared_state import ACTIVE_DIRECTIVES
 from app.types import SecurityRubricEvaluation, STRIDEThreatEntry
 from app.utils import (
     extract_interaction_id,
@@ -36,13 +35,13 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
     project_id = ctx.state.get("project_id", "default_proj")
     proposal = node_input.get("proposal", str(node_input)) if isinstance(node_input, dict) else str(node_input)
 
-    judge_directive = ACTIVE_DIRECTIVES.get(project_id) or ctx.state.get("latest_judge_directive", None)
+    judge_directive = ctx.state.get("latest_judge_directive", None)
 
     skills_dir = Path(__file__).parent / "skills"
     caveman_trigger = " caveman mode" if ctx.state.get("caveman_mode", True) else ""
     matched_skills = load_matching_skills(skills_dir, f"{proposal}{caveman_trigger}")
 
-    prompt = get_security_prompt(proposal, judge_directive=judge_directive, skills_context=matched_skills)
+    prompt = get_security_prompt(proposal, judge_directive=judge_directive, skills_context=matched_skills, project_id=project_id)
 
     prompt = (
         f"You MUST return a valid JSON payload matching the SecurityRubricEvaluation schema.\n"
@@ -52,7 +51,11 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
     )
 
     critique_text = ""
+    res: Any = None
     rubric: SecurityRubricEvaluation
+
+    from app.harness.tools import format_tools_for_interactions, get_harness_tools
+    harness_tools = get_harness_tools()
 
     if settings.mock_mode:
         rubric = SecurityRubricEvaluation(
@@ -78,12 +81,15 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
             response_stream = await client.aio.interactions.create(
                 model=settings.auditor_model_id,
                 input=prompt,
+                tools=format_tools_for_interactions(harness_tools),
                 stream=True,
                 store=True,
                 previous_interaction_id=previous_interaction_id,
-                response_format=SecurityRubricEvaluation,
+                response_format=SecurityRubricEvaluation.model_json_schema(),
             )
+            from app.utils import log_gemini_inspection
             async for chunk in response_stream:
+                log_gemini_inspection("interactions.create_chunk", settings.auditor_model_id, chunk, {"role": "security"})
                 text = extract_stream_chunk_text(chunk)
                 if text:
                     critique_text += text
@@ -94,32 +100,40 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
             if not critique_text.strip():
                 raise ValueError("Empty stream returned from interactions API")
         except Exception as e:
-            logger.warning(f"Interactions API failed for security agent ({e}), falling back to generate_content_stream.")
+            logger.warning(f"Interactions API failed for security agent ({e}), falling back to stream_agent_with_tools.")
             try:
-                response_stream = await client.aio.models.generate_content_stream(
-                    model=settings.auditor_model_id,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=SecurityRubricEvaluation,
-                    ),
-                )
-                async for chunk in response_stream:
-                    text = extract_stream_chunk_text(chunk)
-                    if text:
-                        critique_text += text
-                        yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+                from app.harness.tools import stream_agent_with_tools
+                async for text in stream_agent_with_tools(
+                    client=client,
+                    model_id=settings.auditor_model_id,
+                    prompt=prompt,
+                    tools=harness_tools,
+                    response_schema=SecurityRubricEvaluation,
+                ):
+                    critique_text += text
+                    yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
             except Exception as stream_err:
-                logger.warning(f"generate_content_stream failed ({stream_err}), falling back to non-streaming generate_content.")
-                res = await client.aio.models.generate_content(
-                    model=settings.auditor_model_id,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=SecurityRubricEvaluation,
+                logger.warning(f"stream_agent_with_tools failed ({stream_err}).")
+
+            if not critique_text.strip():
+                logger.warning("Empty stream text for security agent, running non-streaming text fallback with retry.")
+                from app.utils import call_with_retry_on_429, log_gemini_inspection
+                res = await call_with_retry_on_429(
+                    lambda: client.aio.models.generate_content(
+                        model=settings.auditor_model_id,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=SecurityRubricEvaluation,
+                        ),
                     ),
+                    max_retries=3,
+                    base_delay=3.0,
                 )
-                critique_text = res.text or ""
+                log_gemini_inspection("generate_content", settings.auditor_model_id, res, {"role": "security"})
+                critique_text = getattr(res, "text", "") or ""
+                if not critique_text.strip():
+                    raise RuntimeError("Security Auditor failed to generate evaluation rubric after retries.")
                 yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=critique_text)]))
 
         try:
@@ -149,6 +163,7 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
     else:
         output_payload = critique_text
 
+    from app.utils import extract_token_usage_dict
     from app.harness.tracing import DebateTracer
     DebateTracer.record_span(
         ctx=ctx,
@@ -160,6 +175,7 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
             "data_protection_score": rubric.data_protection_score,
             "identity_access_score": rubric.identity_access_score,
             "vulnerability_surface_area": rubric.vulnerability_surface_area,
+            **extract_token_usage_dict(res),
         },
     )
     state_dump = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)

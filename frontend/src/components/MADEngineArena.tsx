@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Zap, Activity, Users, Cpu, Shield, Terminal, Play, Send, Sparkles, FastForward, MessageSquare, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Zap, Activity, Users, Cpu, Shield, Terminal, Play, Send, Sparkles, FastForward, MessageSquare, AlertCircle, CheckCircle2, Compass, XCircle } from "lucide-react";
 import { useMADEngine } from "../context/MADEngineContext";
+import { TraceInspectorModal } from "./TraceInspectorModal";
 
 const markdownComponents: any = {
   code({ node, inline, className, children, ...props }: any) {
@@ -34,9 +35,10 @@ const markdownComponents: any = {
   th: ({ children }: any) => <th className="bg-slate-900/90 p-2.5 font-bold text-slate-200 border-b border-slate-800/80 text-[11px] uppercase tracking-wider">{children}</th>,
   td: ({ children }: any) => <td className="p-2.5 border-b border-slate-800/50 text-slate-300 font-mono text-[11px]">{children}</td>,
   blockquote: ({ children }: any) => <blockquote className="border-l-4 border-indigo-500 pl-3.5 py-1.5 my-2.5 text-slate-300 italic bg-indigo-500/10 rounded-r-xl">{children}</blockquote>,
-  ul: ({ children }: any) => <ul className="list-disc pl-5 my-2 space-y-1 text-slate-300">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal pl-5 my-2 space-y-1 text-slate-300">{children}</ol>,
-  h1: ({ children }: any) => <h1 className="text-sm font-extrabold text-white my-3 border-b border-slate-800 pb-1.5 flex items-center gap-2">{children}</h1>,
+  ul: ({ children }: any) => <ul className="list-disc list-outside ml-5 space-y-1 my-1.5 text-slate-300">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-5 space-y-1 my-1.5 text-slate-300">{children}</ol>,
+  li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
+  h1: ({ children }: any) => <h1 className="text-sm font-black text-white my-3 tracking-wide">{children}</h1>,
   h2: ({ children }: any) => <h2 className="text-xs font-bold text-indigo-300 my-2.5 uppercase tracking-wider">{children}</h2>,
   h3: ({ children }: any) => <h3 className="text-xs font-semibold text-slate-200 my-2">{children}</h3>,
   p: ({ children }: any) => <div className="leading-relaxed my-1.5 text-slate-300">{children}</div>,
@@ -57,6 +59,7 @@ export function MADEngineArena() {
   } = useMADEngine();
   
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
   useEffect(() => {
     if (streamEndRef.current) {
@@ -77,12 +80,32 @@ export function MADEngineArena() {
             <MessageSquare className="w-3.5 h-3.5 text-indigo-400" /> Live Debate Arena
           </h2>
         </div>
-        {activeProject && (
-          <span className="text-[10px] bg-indigo-500/10 text-indigo-300 font-bold px-2.5 py-1 rounded-lg border border-indigo-500/30 shadow-sm font-mono">
-            ROUND {isStreaming && liveRound ? activeProject.rounds_history.length + 1 : activeProject.current_round}
-          </span>
-        )}
+        <div className="flex items-center gap-2.5">
+          {activeProject && (
+            <button
+              onClick={() => setIsTraceModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold tracking-wide flex items-center gap-1.5 transition shadow-sm"
+              title="Inspect OpenTelemetry Traces"
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>OTEL TRACES</span>
+            </button>
+          )}
+          {activeProject && (
+            <span className="text-[10px] bg-indigo-500/10 text-indigo-300 font-bold px-2.5 py-1 rounded-lg border border-indigo-500/30 shadow-sm font-mono">
+              ROUND {isStreaming && liveRound ? activeProject.rounds_history.length + 1 : activeProject.current_round}
+            </span>
+          )}
+        </div>
       </div>
+
+      {activeProject && (
+        <TraceInspectorModal
+          projectId={activeProject.project_id}
+          isOpen={isTraceModalOpen}
+          onClose={() => setIsTraceModalOpen(false)}
+        />
+      )}
 
       {/* Arena Message Thread */}
       <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -331,10 +354,14 @@ export function MADEngineArena() {
                 <button
                   onClick={() => handleResume()}
                   disabled={isResuming || !resumeText.trim()}
-                  className="px-4 py-2.5 bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 min-w-[90px] shadow-md shadow-indigo-600/20 cursor-pointer"
-                  title="Send Custom Directive"
+                  className="px-4 py-2.5 bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 min-w-[110px] shadow-md shadow-indigo-600/20 cursor-pointer"
+                  title={pendingInput.name === "judge_review" ? "Steer Next Turn with Custom Directive" : "Send Response"}
                 >
-                  {isResuming ? <Activity className="w-4 h-4 animate-spin" /> : (
+                  {isResuming ? <Activity className="w-4 h-4 animate-spin" /> : pendingInput.name === "judge_review" ? (
+                    <>
+                      <Compass className="w-3.5 h-3.5" /> Steer Next Turn
+                    </>
+                  ) : (
                     <>
                       <Send className="w-3.5 h-3.5" /> Send
                     </>
@@ -343,9 +370,9 @@ export function MADEngineArena() {
               </div>
 
               {/* Quick Action Buttons */}
-              <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+              <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 flex-wrap gap-2">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Quick Actions:</span>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {pendingInput.name === "judge_review" && (
                     <>
                       <button 
@@ -363,6 +390,14 @@ export function MADEngineArena() {
                         title="End debate and compile final PRD.md & ARCHITECTURE.md"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" /> Force Synthesize Assets
+                      </button>
+                      <button 
+                        onClick={() => handleResume("CANCEL")} 
+                        disabled={isResuming}
+                        className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 disabled:opacity-50 rounded-lg font-bold text-xs transition text-rose-300 flex items-center gap-1.5 cursor-pointer hover:border-rose-700 shadow-sm"
+                        title="Cancel and end current debate session"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Cancel Debate
                       </button>
                     </>
                   )}

@@ -27,5 +27,10 @@ Critiques & Audits:
     if skills_context:
         prompt += f"\n\n--- ARCHITECTURAL & EVALUATION STANDARDS ---\nUse the following loaded design paradigms and standards during your scoring assessment:\n{skills_context}"
 
-    prompt += "\n\nAssign a score between 0.0 (failing/flawed) and 1.0 (perfectly ready) for the 6 software quality pillars."
+    prompt += (
+        "\n\n--- EPISTEMIC SCRATCHPAD VERIFICATION ---\n"
+        "MANDATORY INSTRUCTION: Call `query_verified_facts(project_id)` to verify all locked project requirements "
+        "and architectural facts. If the proposal violates or regresses on any verified fact, penalize the corresponding quality pillar scores below 0.85.\n\n"
+        "Assign a score between 0.0 (failing/flawed) and 1.0 (perfectly ready) for the 6 software quality pillars."
+    )
     return prompt

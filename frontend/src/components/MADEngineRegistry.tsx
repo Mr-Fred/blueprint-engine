@@ -28,7 +28,17 @@ export function MADEngineRegistry() {
         ) : (
           projectsList.map((p, idx) => {
             const isActive = activeProject?.project_id === p.project_id;
-            const isCompleted = p.status === "completed" || p.consensus_achieved || Boolean(p.final_prd) || Boolean(p.final_architecture);
+            const isCompleted =
+              p.status === "completed" ||
+              p.consensus_achieved ||
+              Boolean(p.final_prd) ||
+              Boolean(p.final_architecture) ||
+              (isActive &&
+                Boolean(
+                  activeProject?.consensus_achieved ||
+                    activeProject?.final_prd ||
+                    activeProject?.final_architecture
+                ));
 
             return (
               <div

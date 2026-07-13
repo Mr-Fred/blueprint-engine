@@ -17,8 +17,20 @@ import os
 
 
 def setup_telemetry() -> str | None:
-    """Configure OpenTelemetry and GenAI telemetry with GCS upload."""
+    """Configure OpenTelemetry and GenAI telemetry with unified in-memory exporter and optional GCS upload."""
     os.environ.setdefault("GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY", "true")
+    os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    commit_sha = os.environ.get("COMMIT_SHA", "dev")
+    os.environ.setdefault(
+        "OTEL_RESOURCE_ATTRIBUTES",
+        f"service.namespace=blueprint-agent,service.version={commit_sha}",
+    )
+
+    try:
+        from app.harness.tracing import setup_otel_provider
+        setup_otel_provider()
+    except Exception as e:
+        logging.warning(f"Failed to initialize OTEL provider: {e}")
 
     bucket = os.environ.get("LOGS_BUCKET_NAME")
     capture_content = os.environ.get(
@@ -31,14 +43,6 @@ def setup_telemetry() -> str | None:
         os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "NO_CONTENT"
         os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_UPLOAD_FORMAT", "jsonl")
         os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK", "upload")
-        os.environ.setdefault(
-            "OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental"
-        )
-        commit_sha = os.environ.get("COMMIT_SHA", "dev")
-        os.environ.setdefault(
-            "OTEL_RESOURCE_ATTRIBUTES",
-            f"service.namespace=blueprint-agent,service.version={commit_sha}",
-        )
         path = os.environ.get("GENAI_TELEMETRY_PATH", "completions")
         os.environ.setdefault(
             "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH",
@@ -46,7 +50,7 @@ def setup_telemetry() -> str | None:
         )
     else:
         logging.info(
-            "Prompt-response logging disabled (set LOGS_BUCKET_NAME=gs://your-bucket and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT to enable)"
+            "Prompt-response logging disabled (set LOGS_BUCKET_NAME=gs://your-bucket and OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT to enable GCS upload)"
         )
 
     return bucket

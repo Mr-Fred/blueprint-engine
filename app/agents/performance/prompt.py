@@ -1,7 +1,8 @@
 import pathlib
+from app.utils import truncate_prompt_text
 
 
-def get_performance_prompt(concept: str, current_round: int, history: list, judge_directive: str = None, skills_context: str = None) -> str:
+def get_performance_prompt(concept: str, current_round: int, history: list, judge_directive: str = None, skills_context: str = None, project_id: str = None) -> str:
     """Constructs the prompt for the Lead Performance & Scaling Architect by dynamically loading guidelines from AGENT.md."""
     agent_dir = pathlib.Path(__file__).parent
     agent_md_path = agent_dir / "AGENT.md"
@@ -22,14 +23,17 @@ Current Round: {current_round}"""
 
     if history:
         last_round = history[-1]
+        prev_proposal = truncate_prompt_text(str(last_round.get('proposal_draft', '')), max_chars=4000)
+        prev_critique = truncate_prompt_text(str(last_round.get('critique', '')), max_chars=4000)
         prompt += (
-            f"\n\n--- PREVIOUS ROUND PROPOSAL ---\n{last_round.get('proposal_draft', '')}"
-            f"\n\n--- AUDITORS' STEP-BY-STEP HARDENING & CRITIQUE ---\n{last_round.get('critique', '')}"
+            f"\n\n--- PREVIOUS ROUND PROPOSAL ---\n{prev_proposal}"
+            f"\n\n--- AUDITORS' STEP-BY-STEP HARDENING & CRITIQUE ---\n{prev_critique}"
             "\n\nCRITICAL AUDIT REMEDIATION REQUIREMENT:\n"
             "You MUST systematically apply and address every step-by-step hardening instruction "
             "provided above by the Security and SRE auditors. Explicitly describe how your refined "
             "blueprint incorporates their required safeguards, circuit breakers, IAM controls, and observability SLOs."
         )
+
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize addressing this judge feedback in your refined design proposal with highest precedence."
@@ -37,5 +41,21 @@ Current Round: {current_round}"""
     if skills_context:
         prompt += f"\n\n--- DOMAIN SKILLS & ARCHITECTURAL PATTERNS ---\nUse the following loaded skills and design paradigms to formulate a scalable, robust architecture:\n{skills_context}"
 
-    prompt += "\n\nProvide your detailed architectural proposal focusing on: Paradigm (OOP/FP), Data storage, API contracts, scaling limits, and throughput."
+    facts_block = ""
+    if project_id:
+        try:
+            from app.harness.tools import HarnessToolRegistry
+            facts = HarnessToolRegistry.query_verified_facts(project_id)
+            if facts:
+                lines = [f"- [{f.get('verifier', 'System')}]: {f.get('statement')}" for f in facts]
+                facts_block = "\n\n--- CURRENT VERIFIED EPISTEMIC FACTS (EPISTEMIC SCRATCHPAD) ---\n" + "\n".join(lines)
+        except Exception:
+            pass
+
+    prompt += (
+        f"{facts_block}\n\n--- EPISTEMIC SCRATCHPAD & FACT VERIFICATION ---\n"
+        "You MUST adhere to all verified epistemic facts listed above. Do not propose any technology that contradicts locked facts.\n"
+        "If you establish a new foundational architectural discovery or requirement, explicitly document it under an '### Epistemic Discoveries' section.\n\n"
+        "Provide your detailed architectural proposal focusing on: Paradigm (OOP/FP), Data storage, API contracts, scaling limits, and throughput."
+    )
     return prompt

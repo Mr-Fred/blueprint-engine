@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileText, Clipboard, Check, Download, RefreshCw, Terminal, BookOpen, Layers, Sparkles, Maximize2, Minimize2, X, ExternalLink, Eye, ArrowLeft, ShieldAlert, Network, Code2 } from "lucide-react";
 import { useMADEngine } from "../context/MADEngineContext";
+import MermaidViewer from "./MermaidViewer";
 
 const cleanMarkdown = (text?: string | null) => {
   if (!text) return "";
@@ -24,6 +25,11 @@ const cleanMarkdown = (text?: string | null) => {
 
 const blueprintMarkdownComponents: any = {
   code({ node, inline, className, children, ...props }: any) {
+    const match = /language-(\w+)/.exec(className || "");
+    const lang = match ? match[1].toLowerCase() : "";
+    if (lang === "mermaid") {
+      return <MermaidViewer chart={String(children)} filename="Mermaid Diagram" />;
+    }
     const isMultiLine = String(children).includes("\n");
     const isInline = inline || (!isMultiLine && !className);
     return isInline ? (
@@ -152,32 +158,8 @@ export function MADEngineBlueprints() {
     if (!content) return <div className="text-slate-500 italic">No content generated.</div>;
     const cleaned = cleanMarkdown(content);
 
-    if (tab === "topology" || tab === "diagrams/topology.mmd") {
-      return (
-        <div className="space-y-4">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Network className="w-5 h-5 text-indigo-400" />
-              <div>
-                <h4 className="text-xs font-bold text-white">Mermaid System Topology Specification</h4>
-                <p className="text-[10px] text-slate-400">Can be rendered directly in GitHub, Notion, or Mermaid Live Editor.</p>
-              </div>
-            </div>
-            <span className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[10px] font-mono font-bold rounded">
-              .mmd diagram
-            </span>
-          </div>
-          <div className="rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
-            <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-[11px] font-mono text-slate-400">
-              <span>diagrams/topology.mmd</span>
-              <span className="text-indigo-400">Mermaid Graph Syntax</span>
-            </div>
-            <pre className="p-4 overflow-x-auto text-xs font-mono leading-relaxed text-indigo-200">
-              <code>{content}</code>
-            </pre>
-          </div>
-        </div>
-      );
+    if (tab === "topology" || tab === "diagrams/topology.mmd" || String(tab).endsWith(".mmd")) {
+      return <MermaidViewer chart={cleaned} filename={String(tab)} />;
     }
 
     if (tab === "risk_matrix" || tab === "security/risk_matrix.json") {

@@ -1,12 +1,11 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field
+from typing import Any, List, Optional, Tuple  # noqa: UP035
 
-from google import genai
 from google.adk.agents.context import Context
 from google.adk.events.event import Event
 from google.adk.events.request_input import RequestInput
 from google.adk.workflow import node
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.types import DebateRound, PillarScores
@@ -17,16 +16,16 @@ logger = logging.getLogger(__name__)
 
 class AgreementMatrix(BaseModel):
     """Structured matrix of agreed baseline points vs active contentions across debate turns."""
-    agreed_points: List[str] = Field(default_factory=list, description="Architectural points mutually agreed upon")
-    active_contentions: List[str] = Field(default_factory=list, description="Unresolved architectural trade-offs or disputes")
+    agreed_points: List[str] = Field(default_factory=list, description="Architectural points mutually agreed upon")  # noqa: UP006
+    active_contentions: list[str] = Field(default_factory=list, description="Unresolved architectural trade-offs or disputes")
     summary_text: str = Field(default="", description="Markdown summary of the agreement state")
 
 
 class AgreementMatrixExtraction(BaseModel):
     """Pydantic schema for structured lightweight semantic extraction."""
-    agreed_points: List[str] = Field(default_factory=list, description="Architectural agreements extracted from debate history")
-    active_contentions: List[str] = Field(default_factory=list, description="Architectural trade-offs or contentions")
-    extracted_facts: List[str] = Field(default_factory=list, description="Mutually verified factual architectural statements")
+    agreed_points: List[str] = Field(default_factory=list, description="Architectural agreements extracted from debate history")  # noqa: UP006
+    active_contentions: List[str] = Field(default_factory=list, description="Architectural trade-offs or contentions")  # noqa: UP006
+    extracted_facts: List[str] = Field(default_factory=list, description="Mutually verified factual architectural statements")  # noqa: UP006
 
 
 class RoundManager:
@@ -46,18 +45,15 @@ class ContextSummarizer:
     Supports deterministic heuristic synthesis as well as lightweight semantic structured model extraction.
     """
 
-    @classmethod
-    def build_agreement_matrix(cls, rounds_history: List[DebateRound]) -> AgreementMatrix:
+    @staticmethod
+    def build_agreement_matrix(rounds_history: List[DebateRound]) -> AgreementMatrix:  # noqa: UP006
         """Deterministic heuristic fallback that synthesizes an AgreementMatrix from historical DebateRound objects."""
-        agreed: List[str] = []
-        contentions: List[str] = []
+        agreed: List[str] = []  # noqa: UP006
+        contentions: List[str] = []  # noqa: UP006
 
         for rnd in rounds_history:
-            proposal_draft = rnd.get("proposal_draft", "") if isinstance(rnd, dict) else getattr(rnd, "proposal_draft", "")
-            critique = rnd.get("critique", "") if isinstance(rnd, dict) else getattr(rnd, "critique", "")
-
-            prop_lines = [l.strip() for l in proposal_draft.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")]
-            crit_lines = [l.strip() for l in critique.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")]
+            prop_lines = [l.strip() for l in rnd.proposal_draft.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")]
+            crit_lines = [l.strip() for l in rnd.critique.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")]
 
             for l in prop_lines[:3]:
                 if l not in agreed:
@@ -89,15 +85,10 @@ class ContextSummarizer:
 
         try:
             client = settings.get_genai_client()
-            history_summary_parts = []
-            for i, rnd in enumerate(rounds_history):
-                round_num = rnd.get("round_number", i + 1) if isinstance(rnd, dict) else getattr(rnd, "round_number", getattr(rnd, "round_num", i + 1))
-                proposal_draft = rnd.get("proposal_draft", "") if isinstance(rnd, dict) else getattr(rnd, "proposal_draft", "")
-                critique = rnd.get("critique", "") if isinstance(rnd, dict) else getattr(rnd, "critique", "")
-                history_summary_parts.append(
-                    f"Round {round_num}:\nProposal: {proposal_draft[:600]}\nCritique: {critique[:600]}"
-                )
-            history_summary = "\n\n".join(history_summary_parts)
+            history_summary = "\n\n".join(
+                f"Round {rnd.round_number}:\nProposal: {rnd.proposal_draft[:600]}\nCritique: {rnd.critique[:600]}"
+                for rnd in rounds_history
+            )
             prompt = (
                 "Analyze the following architectural debate history and extract key architectural agreements, "
                 "active technical contentions, and verified architectural facts:\n\n"
@@ -158,7 +149,7 @@ def should_exit_grill(
 
 
 def should_synthesize_or_continue(
-    scores: Optional[PillarScores] = None,
+    scores: PillarScores | None = None,
     current_round: int = 1,
     max_rounds: int = 3,
     gate_threshold: float = 0.85,
@@ -267,28 +258,28 @@ def extract_requirements_from_grilling(concept: str, grill_history: list) -> dic
     pattern = None
     compliance = []
     use_cases = [concept]
-    
+
     text_corpus = concept + " " + " ".join(str(item.get("content", "")) for item in grill_history if isinstance(item, dict))
     text_lower = text_corpus.lower()
-    
+
     for tech in ["python", "fastapi", "react", "next.js", "typescript", "node.js", "go", "postgres", "redis", "mongodb", "dynamodb", "spanner", "kafka", "docker", "kubernetes"]:
         if tech in text_lower:
             tech_stack.append(tech)
-            
+
     for cp, display in [("aws", "AWS"), ("gcp", "GCP"), ("google cloud", "GCP"), ("azure", "Azure")]:
         if cp in text_lower:
             cloud = display
             break
-            
+
     for pat, display in [("microservice", "Microservices"), ("event sourc", "Event Sourcing"), ("serverless", "Serverless"), ("clean arch", "Clean Architecture"), ("monolith", "Modular Monolith")]:
         if pat in text_lower:
             pattern = display
             break
-            
+
     for comp in ["soc2", "gdpr", "hipaa", "pci-dss", "iso27001"]:
         if comp in text_lower:
             compliance.append(comp.upper())
-            
+
     return RequirementsSchema(
         preferred_tech_stack=tech_stack or ["Python / FastAPI", "TypeScript / React"],
         cloud_provider=cloud or "Multi-Cloud / GCP Preferred",

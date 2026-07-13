@@ -88,6 +88,23 @@ export function MADEngineProvider({ children }: { children: React.ReactNode }) {
       if (state?.caveman_mode !== undefined) {
         setCavemanMode(state.caveman_mode);
       }
+      if (state) {
+        setProjectsList(prev =>
+          prev.map(p => {
+            if (p.project_id === state.project_id) {
+              const isDone = state.consensus_achieved || Boolean(state.final_prd) || Boolean(state.final_architecture);
+              return {
+                ...p,
+                status: isDone ? "completed" : p.status,
+                consensus_achieved: state.consensus_achieved,
+                final_prd: state.final_prd || undefined,
+                final_architecture: state.final_architecture || undefined,
+              };
+            }
+            return p;
+          })
+        );
+      }
     },
     onFetchState: fetchProjectState
   });

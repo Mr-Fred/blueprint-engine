@@ -43,6 +43,7 @@ def get_genai_client() -> genai.Client:
 async def synthesis_node(ctx: Context, node_input: Any) -> Event:
     """Node 5: Compiles production-ready ADK 2.0 multi-file architectural artifacts and writes them safely."""
     client = get_genai_client()
+    bundle_response: Any = None
     project_id = ctx.state.get("project_id", "default_proj")
     concept = ctx.state.get("concept", "")
 
@@ -150,7 +151,7 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
     FilesystemJail.write_project_file(project_id, "PRD.md", prd_text)
     FilesystemJail.write_project_file(project_id, "ARCHITECTURE.md", arch_text)
 
-    from app.harness.ledger import GlobalArchitectureLedger, EpistemicScratchpad
+    from app.harness.ledger import EpistemicScratchpad, GlobalArchitectureLedger
     ledger = GlobalArchitectureLedger.load(project_id)
     ledger.update_baseline(
         summary=f"# Synthesized Baseline Architecture for Project '{project_id}'\n\n{arch_text}",
@@ -177,11 +178,13 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
     ctx.state["consensus_achieved"] = True
 
     from app.harness.tracing import DebateTracer
+    from app.utils import extract_token_usage_dict
+    token_meta = extract_token_usage_dict(bundle_response)
     DebateTracer.record_span(
         ctx=ctx,
         span_name="ASSETS_SYNTHESIZED",
         agent_role="Synthesizer",
-        metadata={"files_written": list(written_components.keys())},
+        metadata={"files_written": list(written_components.keys()), **token_meta},
     )
 
     state_dump = ctx.state.to_dict()
