@@ -145,11 +145,11 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
             raise ValueError(write_result)
         written_components[item.relative_path] = item.content
 
-    # Also maintain top-level compatibility aliases
+    # Maintain top-level ARCHITECTURE.md while keeping canonical docs/prd.md inside docs/
     prd_text = written_components.get("docs/prd.md", written_components.get("PRD.md", ""))
     arch_text = written_components.get("ARCHITECTURE.md", "")
-    FilesystemJail.write_project_file(project_id, "PRD.md", prd_text)
-    FilesystemJail.write_project_file(project_id, "ARCHITECTURE.md", arch_text)
+    if arch_text:
+        FilesystemJail.write_project_file(project_id, "ARCHITECTURE.md", arch_text)
 
     from app.harness.ledger import EpistemicScratchpad, GlobalArchitectureLedger
     ledger = GlobalArchitectureLedger.load(project_id)

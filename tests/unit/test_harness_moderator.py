@@ -46,3 +46,50 @@ def test_routing_predicates():
     assert consensus is True
     assert route == "synthesize"
 
+
+class DummyContext:
+    def __init__(self, state_dict=None):
+        self.state = state_dict or {}
+    def to_dict(self):
+        return self.state
+
+
+def test_initialize_debate_preserves_concept_on_resume():
+    """Verify initialize_debate preserves existing concept during resume payload dispatch."""
+    from app.harness.moderator import initialize_debate
+    ctx = DummyContext({"concept": "I want to build an ai assisted IDE extension in French", "project_id": "proj_fr_ide"})
+    resume_payload = {"grill_question": "Hybrid-Local model with Cloud Fallback."}
+
+    event = initialize_debate._func(ctx, resume_payload)
+    assert event.actions.route == "grill"
+    assert ctx.state["concept"] == "I want to build an ai assisted IDE extension in French"
+    assert ctx.state["project_id"] == "proj_fr_ide"
+
+
+@pytest.mark.asyncio
+async def test_grill_node_formats_past_history_and_question_number():
+    """Verify grill_node injects past interview history and increments question numbers to prevent memory loss."""
+    from app.harness.moderator import grill_node
+    from app.config import settings
+
+    settings.mock_mode = True
+    ctx = DummyContext({
+        "concept": "AI Tutor IDE Extension",
+        "grill_question_count": 1,
+        "max_grill_questions": 3,
+        "grill_history": [
+            {"role": "assistant", "content": "Question 1: Host IDE target?"},
+            {"role": "user", "content": "VS Code"}
+        ]
+    })
+
+    events = []
+    async for ev in grill_node._func(ctx, "VS Code"):
+        events.append(ev)
+
+    assert ctx.state["grill_question_count"] == 2
+    assert len(ctx.state["grill_history"]) == 4
+    # Verify the assistant prompt formatted turn history correctly
+    assert ctx.state["grill_history"][0]["content"] == "Question 1: Host IDE target?"
+
+

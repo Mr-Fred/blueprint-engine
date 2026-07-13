@@ -37,7 +37,10 @@ async def performance_agent_node(ctx: Context, node_input: Any) -> Event:
     history = ctx.state.get("rounds_history", [])
     current_round = ctx.state.get("current_round", 1)
     project_id = ctx.state.get("project_id", "default_project")
-    proposal = ctx.state.get("proposal_draft", str(node_input))
+    concept = ctx.state.get("concept", "A new software project")
+    proposal = ctx.state.get("proposal_draft") or (
+        node_input if isinstance(node_input, str) and node_input.strip() and node_input.strip() != "None" else concept
+    )
 
     judge_directive = ctx.state.get("latest_judge_directive", "")
     skills_dir = Path(__file__).parent / "skills"

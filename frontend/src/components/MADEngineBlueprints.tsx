@@ -8,19 +8,21 @@ import MermaidViewer from "./MermaidViewer";
 
 const cleanMarkdown = (text?: string | null) => {
   if (!text) return "";
-  let cleaned = text.trim();
+  let cleaned = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   const fenceRegex = /^```(?:markdown|md|)\s*\n([\s\S]*?)\n```\s*$/i;
   const match = cleaned.match(fenceRegex);
   if (match) {
-    return match[1].trim();
-  }
-  if (cleaned.startsWith("```") && cleaned.endsWith("```")) {
+    cleaned = match[1].trim();
+  } else if (cleaned.startsWith("```") && cleaned.endsWith("```")) {
     const lines = cleaned.split("\n");
     lines.shift();
     if (lines[lines.length - 1].trim() === "```") lines.pop();
-    return lines.join("\n").trim();
+    cleaned = lines.join("\n").trim();
   }
-  return cleaned;
+  return cleaned.replace(/\n{3,}/g, "\n\n");
 };
 
 const blueprintMarkdownComponents: any = {
@@ -37,10 +39,10 @@ const blueprintMarkdownComponents: any = {
         {children}
       </code>
     ) : (
-      <div className="my-3 rounded-xl overflow-hidden border border-slate-800/80 bg-slate-950/90 shadow-lg block max-w-full">
+      <div className="my-2.5 rounded-xl overflow-hidden border border-slate-800/80 bg-slate-950/90 shadow-lg block max-w-full">
         <div className="bg-slate-900/90 px-3.5 py-1.5 border-b border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-mono">
           <span className="flex items-center gap-1.5 text-indigo-400 font-bold">
-            <Terminal className="w-3 h-3" /> Technical Specification Snippet
+            <Terminal className="w-3 h-3" /> Architecture Spec / Code
           </span>
           <span className="text-[9px] text-slate-500 uppercase tracking-wider">Code Block</span>
         </div>
@@ -51,21 +53,21 @@ const blueprintMarkdownComponents: any = {
     );
   },
   table: ({ children }: any) => (
-    <div className="overflow-x-auto max-w-full my-4 rounded-xl border border-slate-800/80 shadow-md block bg-slate-950/60">
+    <div className="overflow-x-auto max-w-full my-3 rounded-xl border border-slate-800/80 shadow-md block bg-slate-950/60">
       <table className="w-full text-left border-collapse text-xs sm:text-sm font-sans">{children}</table>
     </div>
   ),
-  th: ({ children }: any) => <th className="bg-slate-900/90 p-3 font-bold text-slate-200 border-b border-slate-800/80 text-[11px] sm:text-xs uppercase tracking-wider whitespace-nowrap">{children}</th>,
-  td: ({ children }: any) => <td className="p-3 border-b border-slate-800/50 text-slate-300 text-xs sm:text-sm font-sans max-w-[300px] sm:max-w-[450px] break-words">{children}</td>,
-  blockquote: ({ children }: any) => <blockquote className="border-l-4 border-indigo-500/80 bg-gradient-to-r from-indigo-950/40 to-slate-900/40 pl-4 py-3 my-3 rounded-r-xl text-xs sm:text-sm text-indigo-200/90 italic font-sans break-words">{children}</blockquote>,
-  ul: ({ children }: any) => <ul className="list-disc pl-6 my-2.5 space-y-1.5 text-xs sm:text-sm text-slate-300 font-sans break-words">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal pl-6 my-2.5 space-y-1.5 text-xs sm:text-sm text-slate-300 font-sans break-words">{children}</ol>,
+  th: ({ children }: any) => <th className="bg-slate-900/90 p-2.5 font-bold text-slate-200 border-b border-slate-800/80 text-[11px] sm:text-xs uppercase tracking-wider whitespace-nowrap">{children}</th>,
+  td: ({ children }: any) => <td className="p-2.5 border-b border-slate-800/50 text-slate-300 text-xs sm:text-sm font-sans max-w-[300px] sm:max-w-[450px] break-words">{children}</td>,
+  blockquote: ({ children }: any) => <blockquote className="border-l-4 border-indigo-500/80 bg-gradient-to-r from-indigo-950/40 to-slate-900/40 pl-4 py-2 my-2.5 rounded-r-xl text-xs sm:text-sm text-indigo-200/90 italic font-sans break-words">{children}</blockquote>,
+  ul: ({ children }: any) => <ul className="list-disc pl-5 my-1.5 space-y-0.5 text-xs sm:text-sm text-slate-300 font-sans break-words">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal pl-5 my-1.5 space-y-0.5 text-xs sm:text-sm text-slate-300 font-sans break-words">{children}</ol>,
   li: ({ children }: any) => <li className="leading-relaxed pl-1 text-slate-300">{children}</li>,
-  h1: ({ children }: any) => <h1 className="text-lg sm:text-xl font-extrabold text-white mt-6 mb-3 border-b border-slate-800/80 pb-2.5 flex items-center gap-2 font-sans tracking-tight break-words">{children}</h1>,
-  h2: ({ children }: any) => <h2 className="text-sm sm:text-base font-bold text-indigo-300 mt-5 mb-2.5 uppercase tracking-wider font-sans break-words">{children}</h2>,
-  h3: ({ children }: any) => <h3 className="text-xs sm:text-sm font-bold text-slate-200 mt-4 mb-2 font-sans break-words">{children}</h3>,
-  h4: ({ children }: any) => <h4 className="text-xs sm:text-sm font-semibold text-slate-300 mt-3 mb-1.5 font-sans break-words">{children}</h4>,
-  p: ({ children }: any) => <div className="text-xs sm:text-sm leading-relaxed my-2.5 text-slate-300 font-sans break-words">{children}</div>,
+  h1: ({ children }: any) => <h1 className="text-lg sm:text-xl font-extrabold text-white mt-4 mb-2 border-b border-slate-800/80 pb-2 flex items-center gap-2 font-sans tracking-tight break-words first:mt-0">{children}</h1>,
+  h2: ({ children }: any) => <h2 className="text-sm sm:text-base font-bold text-indigo-300 mt-4 mb-1.5 uppercase tracking-wider font-sans break-words first:mt-0">{children}</h2>,
+  h3: ({ children }: any) => <h3 className="text-xs sm:text-sm font-bold text-slate-200 mt-3 mb-1 font-sans break-words first:mt-0">{children}</h3>,
+  h4: ({ children }: any) => <h4 className="text-xs sm:text-sm font-semibold text-slate-300 mt-2.5 mb-1 font-sans break-words first:mt-0">{children}</h4>,
+  p: ({ children }: any) => <p className="text-xs sm:text-sm leading-relaxed mb-2.5 last:mb-0 text-slate-300 font-sans break-words">{children}</p>,
   strong: ({ children }: any) => <strong className="font-bold text-indigo-300">{children}</strong>,
   em: ({ children }: any) => <em className="italic text-indigo-200/90">{children}</em>,
 };
@@ -145,17 +147,45 @@ export function MADEngineBlueprints() {
   const currentContent = activeDoc.content;
   const isPlaceholder = currentContent === "[Saved to PRD.md]" || currentContent === "[Saved to ARCHITECTURE.md]" || currentContent === "[Saved to docs/prd.md]" || currentContent?.startsWith("[Saved to ");
 
-  const hasAnyArtifacts =
-    activeProject &&
-    (activeProject.consensus_achieved ||
-      Boolean(activeProject.final_prd) ||
-      Boolean(activeProject.final_architecture) ||
-      Boolean(activeProject.final_topology) ||
-      Boolean(activeProject.final_risk_matrix) ||
-      (activeProject.final_artifacts && Object.keys(activeProject.final_artifacts).length > 0));
+  const hasPrdContent = Boolean(
+    (activeProject?.final_prd && activeProject.final_prd.trim().length > 0) ||
+      (activeProject?.final_artifacts?.["docs/prd.md"] && activeProject.final_artifacts["docs/prd.md"].trim().length > 0) ||
+      (activeProject?.final_artifacts?.["PRD.md"] && activeProject.final_artifacts["PRD.md"].trim().length > 0)
+  );
+
+  const hasArchContent = Boolean(
+    (activeProject?.final_architecture && activeProject.final_architecture.trim().length > 0) ||
+      (activeProject?.final_artifacts?.["ARCHITECTURE.md"] && activeProject.final_artifacts["ARCHITECTURE.md"].trim().length > 0)
+  );
+
+  const hasTopoContent = Boolean(
+    (activeProject?.final_topology && activeProject.final_topology.trim().length > 0) ||
+      (activeProject?.final_artifacts?.["diagrams/topology.mmd"] && activeProject.final_artifacts["diagrams/topology.mmd"].trim().length > 0)
+  );
+
+  const hasRiskContent = Boolean(
+    (activeProject?.final_risk_matrix &&
+      activeProject.final_risk_matrix.trim().length > 0 &&
+      activeProject.final_risk_matrix.trim() !== "{}") ||
+      (activeProject?.final_artifacts?.["security/risk_matrix.json"] &&
+        activeProject.final_artifacts["security/risk_matrix.json"].trim().length > 0 &&
+        activeProject.final_artifacts["security/risk_matrix.json"].trim() !== "{}")
+  );
+
+  const hasAnyRealArtifacts = hasPrdContent || hasArchContent || hasTopoContent || hasRiskContent;
 
   const renderContentPreview = (tab: DocTab, content: string | null | undefined) => {
-    if (!content) return <div className="text-slate-500 italic">No content generated.</div>;
+    if (!content || !content.trim()) {
+      return (
+        <div className="flex flex-col items-center justify-center p-12 text-center text-slate-500 italic">
+          <Layers className="w-10 h-10 text-slate-600 mb-3 opacity-60" />
+          <span className="text-sm font-semibold text-slate-400">Specification Awaiting Synthesis</span>
+          <p className="text-xs text-slate-500 mt-1.5 max-w-sm not-italic leading-relaxed">
+            This file has not been synthesized yet. Complete the architectural debate or trigger asset synthesis to generate this specification.
+          </p>
+        </div>
+      );
+    }
     const cleaned = cleanMarkdown(content);
 
     if (tab === "topology" || tab === "diagrams/topology.mmd" || String(tab).endsWith(".mmd")) {
@@ -266,7 +296,7 @@ export function MADEngineBlueprints() {
         )}
       </div>
 
-      {!hasAnyArtifacts ? (
+      {!hasAnyRealArtifacts ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-6 border border-dashed border-slate-800/80 rounded-xl bg-slate-900/30 my-4 animate-in fade-in duration-300">
           <Layers className="w-10 h-10 text-slate-600 mb-2.5 animate-bounce" />
           <h4 className="text-xs font-bold text-slate-300 mb-1">Specifications Inactive</h4>
@@ -303,7 +333,11 @@ export function MADEngineBlueprints() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs font-bold text-white group-hover:text-indigo-300 transition-colors truncate">Product Spec</h4>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    {hasPrdContent ? (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    ) : (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-full uppercase tracking-wider shrink-0">Pending</span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">docs/prd.md • Features & scope</p>
                 </div>
@@ -329,7 +363,11 @@ export function MADEngineBlueprints() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs font-bold text-white group-hover:text-violet-300 transition-colors truncate">System Architecture</h4>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    {hasArchContent ? (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    ) : (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-full uppercase tracking-wider shrink-0">Pending</span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">ARCHITECTURE.md • Hexagonal spec</p>
                 </div>
@@ -355,7 +393,11 @@ export function MADEngineBlueprints() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors truncate">Topology Chart</h4>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    {hasTopoContent ? (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    ) : (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-full uppercase tracking-wider shrink-0">Pending</span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">diagrams/topology.mmd • Mermaid</p>
                 </div>
@@ -381,7 +423,11 @@ export function MADEngineBlueprints() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h4 className="text-xs font-bold text-white group-hover:text-rose-300 transition-colors truncate">Security Risk Matrix</h4>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    {hasRiskContent ? (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full uppercase tracking-wider shrink-0">Ready</span>
+                    ) : (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-full uppercase tracking-wider shrink-0">Pending</span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-400 truncate mt-0.5">security/risk_matrix.json • STRIDE</p>
                 </div>

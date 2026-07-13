@@ -177,35 +177,46 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
     node_input = parse_node_input(node_input)
 
     if isinstance(node_input, dict):
-        project_id = node_input.get("project_id", "default_proj")
-        concept = node_input.get("concept", "")
-        caveman_mode = node_input.get("caveman_mode", True)
+        project_id = node_input.get("project_id") or ctx.state.get("project_id", "default_proj")
+        concept = node_input.get("concept") or ctx.state.get("concept", "")
+        caveman_mode = node_input.get("caveman_mode", ctx.state.get("caveman_mode", True))
+        
+        if "grill_history" in node_input and node_input["grill_history"]:
+            ctx.state["grill_history"] = node_input["grill_history"]
+        if "grill_question_count" in node_input:
+            ctx.state["grill_question_count"] = node_input["grill_question_count"]
+        if "grill_completed" in node_input:
+            ctx.state["grill_completed"] = node_input["grill_completed"]
+        if "grill_interaction_id" in node_input and node_input["grill_interaction_id"]:
+            ctx.state["grill_interaction_id"] = node_input["grill_interaction_id"]
     else:
-        project_id = "default_proj"
-        concept = str(node_input)
-        caveman_mode = True
-
-    if project_id and project_id != "default_proj":
-        ctx.state["project_id"] = project_id
-    elif "project_id" not in ctx.state:
-        ctx.state["project_id"] = project_id
-
-    # Check explicit resume inputs first
-    if isinstance(node_input, dict) and "judge_review" in node_input:
-        return Event(output=node_input, route="review", custom_metadata={"state": ctx.state.to_dict()})
-    elif isinstance(node_input, dict) and "grill_question" in node_input:
-        return Event(output=node_input, route="grill", custom_metadata={"state": ctx.state.to_dict()})
-
-    # If grilling has completed or debate rounds already exist, route to 'ready'
-    if ctx.state.get("grill_completed", False) or len(ctx.state.get("rounds_history", [])) > 0:
-        return Event(output=ctx.state.get("concept", concept), route="ready", custom_metadata={"state": ctx.state.to_dict()})
+        project_id = ctx.state.get("project_id", "default_proj")
+        concept = str(node_input) if node_input else ctx.state.get("concept", "")
+        caveman_mode = ctx.state.get("caveman_mode", True)
 
     ctx.state["project_id"] = project_id
-    ctx.state["concept"] = concept
+    if concept and str(concept).strip() not in {"", "None"}:
+        ctx.state["concept"] = concept
+    else:
+        concept = ctx.state.get("concept", "A new software project")
+
     ctx.state["caveman_mode"] = caveman_mode
     ctx.state.setdefault("current_round", 1)
     ctx.state.setdefault("max_rounds", 3)
     ctx.state.setdefault("rounds_history", [])
+    ctx.state.setdefault("grill_history", [])
+
+    state_dict = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)
+
+    # Check explicit resume inputs first
+    if isinstance(node_input, dict) and "judge_review" in node_input:
+        return Event(output=node_input, route="review", custom_metadata={"state": state_dict})
+    elif isinstance(node_input, dict) and "grill_question" in node_input:
+        return Event(output=node_input, route="grill", custom_metadata={"state": state_dict})
+
+    # If grilling has completed or debate rounds already exist, route to 'ready'
+    if ctx.state.get("grill_completed", False) or len(ctx.state.get("rounds_history", [])) > 0:
+        return Event(output=ctx.state.get("concept", concept), route="ready", custom_metadata={"state": state_dict})
 
     from app.harness.tracing import DebateTracer
     DebateTracer.record_span(
@@ -215,7 +226,7 @@ def initialize_debate(ctx: Context, node_input: Any) -> Event:
         metadata={"concept": concept, "caveman_mode": caveman_mode},
     )
 
-    return Event(output=node_input, route="grill", custom_metadata={"state": ctx.state.to_dict()})
+    return Event(output=node_input, route="grill", custom_metadata={"state": state_dict})
 
 
 def mark_requirements_complete(
@@ -301,7 +312,12 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     node_input = parse_node_input(node_input)
     client = settings.get_genai_client()
     project_id = ctx.state.get("project_id", "default_proj")
-    concept = ctx.state.get("concept", "A new software project")
+    concept = ctx.state.get("concept")
+    if isinstance(node_input, dict) and node_input.get("concept") and str(node_input.get("concept")).strip() not in {"", "None"}:
+        concept = node_input["concept"]
+        ctx.state["concept"] = concept
+    if not concept or str(concept).strip() in {"", "None"}:
+        concept = "A new software project"
     question_count = ctx.state.get("grill_question_count", 0)
     max_questions = ctx.state.get("max_grill_questions", 3)
     previous_interaction_id = ctx.state.get("grill_interaction_id")
@@ -329,21 +345,44 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
             ctx.state["grill_history"] = grill_history
         ctx.state["grill_completed"] = True
         ctx.state["requirements"] = extract_requirements_from_grilling(concept, grill_history)
-        yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
+        state_dict = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)
+        yield Event(output=concept, route="ready", custom_metadata={"state": state_dict})
         return
 
-    if not previous_interaction_id:
-        prompt = f"""
-        You are the Lead Performance Architect preparing to design: "{concept}".
-        Your goal is to grill the user to resolve critical architectural design dependencies.
-        Interview him relentlessly about every aspect of this project until you reach a shared understanding.
-        Walk down each branch of the design tree, resolving dependencies between decisions one-by-one.
-        For each question, provide your recommended answer. Ask the questions one at a time.
-        """
-    else:
-        prompt = user_answer
+    qa_history_lines = []
+    q_idx = 1
+    for item in grill_history:
+        role = item.get("role", "")
+        content = str(item.get("content", "")).strip()
+        if role == "assistant":
+            qa_history_lines.append(f"Architect (Question {q_idx}): {content}")
+            q_idx += 1
+        elif role == "user":
+            qa_history_lines.append(f"User Answer: {content}\n")
+    qa_history_text = "\n".join(qa_history_lines)
 
-    prompt += f"\nIf you fully understand the requirements and are ready to start proposing the architecture, reply exactly with: READY\nOtherwise, ask EXACTLY ONE focused, clarifying question. You have {max_questions - question_count} questions remaining."
+    next_q_num = question_count + 1
+    prompt = f"""You are the Lead Performance Architect preparing to design: "{concept}".
+Your goal is to grill the user to resolve critical architectural design dependencies.
+Interview him relentlessly about every aspect of this project until you reach a shared understanding.
+Walk down each branch of the design tree, resolving dependencies between decisions one-by-one.
+"""
+    if qa_history_text:
+        prompt += f"""
+=== PAST INTERVIEW HISTORY (DO NOT REPEAT PREVIOUS QUESTIONS) ===
+{qa_history_text}
+=================================================================
+IMPORTANT INTERVIEW RULE: Look closely at the PAST INTERVIEW HISTORY above. DO NOT re-ask or rephrase any question that has already been asked and answered!
+"""
+
+    prompt += f"""
+Latest User Input: "{user_answer if user_answer else 'No answer yet - starting interview'}"
+
+If you fully understand the requirements and have enough context to start proposing the architecture, reply exactly with: READY
+Otherwise, ask EXACTLY ONE focused, clarifying question that advances the architectural design.
+Start your question clearly with "Question {next_q_num}:" and provide your recommended answer below it.
+You have {max_questions - question_count} questions remaining.
+"""
 
     if settings.mock_mode:
         if question_count == 0:
@@ -375,16 +414,18 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
     grill_history.append({"role": "assistant", "content": text})
     ctx.state["grill_history"] = grill_history
 
+    state_dict = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)
     if should_exit_grill(ctx, question_count=question_count, max_questions=max_questions, model_output=text):
         ctx.state["grill_completed"] = True
         ctx.state["requirements"] = extract_requirements_from_grilling(concept, grill_history)
-        yield Event(output=concept, route="ready", custom_metadata={"state": ctx.state.to_dict()})
+        state_dict = ctx.state.to_dict() if hasattr(ctx.state, "to_dict") else dict(ctx.state)
+        yield Event(output=concept, route="ready", custom_metadata={"state": state_dict})
         return
 
     from google.genai import types
     yield Event(
         content=types.Content(role="model", parts=[types.Part.from_text(text=text)]),
-        custom_metadata={"state": ctx.state.to_dict()}
+        custom_metadata={"state": state_dict}
     )
 
     yield RequestInput(
@@ -392,5 +433,5 @@ async def grill_node(ctx: Context, node_input: Any) -> Event:
         message=text
     )
 
-    yield Event(output="Waiting for user", route="ask_user", custom_metadata={"state": ctx.state.to_dict()})
+    yield Event(output="Waiting for user", route="ask_user", custom_metadata={"state": state_dict})
     return

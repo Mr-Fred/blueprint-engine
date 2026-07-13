@@ -5,6 +5,14 @@ import { Zap, Activity, Users, Cpu, Shield, Terminal, Play, Send, Sparkles, Fast
 import { useMADEngine } from "../context/MADEngineContext";
 import { TraceInspectorModal } from "./TraceInspectorModal";
 
+const normalizeMarkdown = (text?: string | null) => {
+  if (!text) return "";
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+};
+
 const markdownComponents: any = {
   code({ node, inline, className, children, ...props }: any) {
     const isMultiLine = String(children).includes("\n");
@@ -14,7 +22,7 @@ const markdownComponents: any = {
         {children}
       </code>
     ) : (
-      <div className="my-3 rounded-xl overflow-hidden border border-slate-800/80 bg-slate-950/90 shadow-lg block">
+      <div className="my-2.5 rounded-xl overflow-hidden border border-slate-800/80 bg-slate-950/90 shadow-lg block">
         <div className="bg-slate-900/90 px-3.5 py-1.5 border-b border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-mono">
           <span className="flex items-center gap-1.5 text-indigo-400 font-bold">
             <Terminal className="w-3 h-3" /> Architecture Spec / Code
@@ -28,20 +36,20 @@ const markdownComponents: any = {
     );
   },
   table: ({ children }: any) => (
-    <div className="overflow-x-auto my-3 rounded-xl border border-slate-800/80 shadow-md block">
+    <div className="overflow-x-auto my-2 rounded-xl border border-slate-800/80 shadow-md block">
       <table className="w-full text-left border-collapse text-xs">{children}</table>
     </div>
   ),
-  th: ({ children }: any) => <th className="bg-slate-900/90 p-2.5 font-bold text-slate-200 border-b border-slate-800/80 text-[11px] uppercase tracking-wider">{children}</th>,
-  td: ({ children }: any) => <td className="p-2.5 border-b border-slate-800/50 text-slate-300 font-mono text-[11px]">{children}</td>,
-  blockquote: ({ children }: any) => <blockquote className="border-l-4 border-indigo-500 pl-3.5 py-1.5 my-2.5 text-slate-300 italic bg-indigo-500/10 rounded-r-xl">{children}</blockquote>,
-  ul: ({ children }: any) => <ul className="list-disc list-outside ml-5 space-y-1 my-1.5 text-slate-300">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-5 space-y-1 my-1.5 text-slate-300">{children}</ol>,
+  th: ({ children }: any) => <th className="bg-slate-900/90 p-2 font-bold text-slate-200 border-b border-slate-800/80 text-[11px] uppercase tracking-wider">{children}</th>,
+  td: ({ children }: any) => <td className="p-2 border-b border-slate-800/50 text-slate-300 font-mono text-[11px]">{children}</td>,
+  blockquote: ({ children }: any) => <blockquote className="border-l-4 border-indigo-500 pl-3 py-1 my-2 text-slate-300 italic bg-indigo-500/10 rounded-r-xl">{children}</blockquote>,
+  ul: ({ children }: any) => <ul className="list-disc list-outside ml-4 space-y-0.5 my-1.5 text-slate-300">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal list-outside ml-4 space-y-0.5 my-1.5 text-slate-300">{children}</ol>,
   li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
-  h1: ({ children }: any) => <h1 className="text-sm font-black text-white my-3 tracking-wide">{children}</h1>,
-  h2: ({ children }: any) => <h2 className="text-xs font-bold text-indigo-300 my-2.5 uppercase tracking-wider">{children}</h2>,
-  h3: ({ children }: any) => <h3 className="text-xs font-semibold text-slate-200 my-2">{children}</h3>,
-  p: ({ children }: any) => <div className="leading-relaxed my-1.5 text-slate-300">{children}</div>,
+  h1: ({ children }: any) => <h1 className="text-sm font-black text-white mt-3 mb-1.5 tracking-wide first:mt-0">{children}</h1>,
+  h2: ({ children }: any) => <h2 className="text-xs font-bold text-indigo-300 mt-2.5 mb-1 uppercase tracking-wider first:mt-0">{children}</h2>,
+  h3: ({ children }: any) => <h3 className="text-xs font-semibold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h3>,
+  p: ({ children }: any) => <p className="leading-relaxed mb-2 last:mb-0 text-slate-300">{children}</p>,
 };
 
 export function MADEngineArena() {
@@ -149,8 +157,8 @@ export function MADEngineArena() {
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap font-mono prose prose-invert prose-xs max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{msg.content}</ReactMarkdown>
+                    <div className="text-xs text-slate-300 leading-relaxed font-mono prose prose-invert prose-xs max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizeMarkdown(msg.content)}</ReactMarkdown>
                     </div>
                   </div>
                 ))}
@@ -172,8 +180,8 @@ export function MADEngineArena() {
                     </span>
                     <span className="text-[9px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">NODE_2</span>
                   </div>
-                  <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{round.proposal_draft}</ReactMarkdown>
+                  <div className="text-xs text-slate-300 leading-relaxed prose prose-invert prose-xs max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizeMarkdown(round.proposal_draft)}</ReactMarkdown>
                   </div>
                 </div>
 
@@ -194,8 +202,8 @@ export function MADEngineArena() {
                           </span>
                           <span className="text-[9px] bg-rose-500/10 text-rose-300 border border-rose-500/20 px-2 py-0.5 rounded font-mono">NODE_3A</span>
                         </div>
-                        <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{securityPart}</ReactMarkdown>
+                        <div className="text-xs text-slate-300 leading-relaxed prose prose-invert prose-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizeMarkdown(securityPart)}</ReactMarkdown>
                         </div>
                       </div>
                       
@@ -207,8 +215,8 @@ export function MADEngineArena() {
                             </span>
                             <span className="text-[9px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 px-2 py-0.5 rounded font-mono">NODE_3B</span>
                           </div>
-                          <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed prose prose-invert prose-xs max-w-none">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{srePart}</ReactMarkdown>
+                          <div className="text-xs text-slate-300 leading-relaxed prose prose-invert prose-xs max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizeMarkdown(srePart)}</ReactMarkdown>
                           </div>
                         </div>
                       )}
@@ -294,8 +302,8 @@ export function MADEngineArena() {
                     </span>
                     <span className={`text-[9px] ${bgColor} ${textColor} px-2 py-0.5 rounded font-mono border ${borderColor}/30`}>STREAM_LIVE</span>
                   </div>
-                  <div className="text-xs text-slate-300 space-y-2 whitespace-pre-wrap leading-relaxed font-mono prose prose-invert prose-xs max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{chunk.text}</ReactMarkdown>
+                  <div className="text-xs text-slate-300 leading-relaxed font-mono prose prose-invert prose-xs max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{normalizeMarkdown(chunk.text)}</ReactMarkdown>
                     {idx === liveStreams.length - 1 && (
                       <span className={`inline-block w-2 h-3.5 ${pulseColor} ml-1 animate-pulse rounded-sm align-middle`}></span>
                     )}

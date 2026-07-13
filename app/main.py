@@ -87,8 +87,14 @@ def sync_debate_state_from_event(project_id: str, event: Any):
             
         if "grill_history" in state_update:
             DEBATE_SESSIONS[project_id].grill_history = state_update["grill_history"]
+        if "grill_question_count" in state_update:
+            DEBATE_SESSIONS[project_id].grill_question_count = state_update["grill_question_count"]
         if "grill_completed" in state_update:
             DEBATE_SESSIONS[project_id].grill_completed = state_update["grill_completed"]
+        if "grill_interaction_id" in state_update:
+            DEBATE_SESSIONS[project_id].grill_interaction_id = state_update["grill_interaction_id"]
+        if "concept" in state_update and state_update["concept"]:
+            DEBATE_SESSIONS[project_id].concept = state_update["concept"]
         if "requirements" in state_update and state_update["requirements"]:
             req_data = state_update["requirements"]
             try:
@@ -491,8 +497,36 @@ async def resume_debate(project_id: str, req: ResumeRequest):
     if project_id not in DEBATE_SESSIONS:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    session_state = DEBATE_SESSIONS[project_id]
+    try:
+        session = await GLOBAL_SESSION_SERVICE.get_session(
+            app_name="mad_engine",
+            user_id="judge",
+            session_id=project_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to get session during resume: {e}")
+        session = None
+
+    if not session:
+        session = await GLOBAL_SESSION_SERVICE.create_session(
+            user_id="judge",
+            app_name="mad_engine",
+            session_id=project_id,
+            state=session_state.model_dump(),
+        )
+
     runner = Runner(agent=root_agent, session_service=GLOBAL_SESSION_SERVICE, app_name="mad_engine")
-    resume_payload = {req.input_name: req.user_response}
+    resume_payload = {
+        req.input_name: req.user_response,
+        "project_id": project_id,
+        "concept": session_state.concept,
+        "caveman_mode": session_state.caveman_mode,
+        "grill_history": session_state.grill_history,
+        "grill_question_count": session_state.grill_question_count,
+        "grill_completed": session_state.grill_completed,
+        "grill_interaction_id": session_state.grill_interaction_id,
+    }
     message = types.Content(
         role="user",
         parts=[types.Part.from_text(text=json.dumps(resume_payload))],
