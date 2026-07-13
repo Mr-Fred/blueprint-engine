@@ -310,30 +310,9 @@ export function MADEngineArena() {
 
       {/* Bottom Panel: Dynamic RequestInput Handler with Override Guidance */}
       {activeProject && (
-        <div className="p-4 bg-slate-900/80 border-t border-slate-800/80 flex flex-col gap-3 min-h-[110px] justify-center backdrop-blur-md">
+        <div className="p-4 bg-slate-900/80 border-t border-slate-800/80 flex flex-col gap-3 min-h-[80px] justify-center backdrop-blur-md">
           {pendingInput ? (
             <div className="flex flex-col gap-3 animate-fade-in">
-              {/* Guidance Banner */}
-              <div className="p-3 bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-500/40 rounded-xl flex items-start gap-3 shadow-md">
-                <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400 mt-0.5">
-                  {pendingInput.name === "judge_review" ? <Sparkles className="w-4 h-4 animate-pulse" /> : <AlertCircle className="w-4 h-4 text-amber-400" />}
-                </div>
-                <div className="flex-1">
-                  <span className="text-xs font-extrabold text-white uppercase tracking-wide flex items-center gap-1.5">
-                    {pendingInput.name === "judge_review" ? "Architectural Override Mode (Judge Review)" : `Architect Interview: ${pendingInput.name}`}
-                  </span>
-                  <p className="text-[11px] text-slate-300 leading-relaxed mt-0.5">
-                    {pendingInput.name === "judge_review" ? (
-                      <>
-                        The judge completed evaluation for Turn {activeProject.rounds_history.length}. Type custom architectural constraints below to steer Turn {activeProject.rounds_history.length + 1} (e.g. <span className="text-indigo-300 font-mono italic">&quot;Replace Redis with Memcached and reduce P99 target&quot;</span>), OR select a quick action:
-                      </>
-                    ) : (
-                      <>{pendingInput.description}</>
-                    )}
-                  </p>
-                </div>
-              </div>
-
               {/* Custom Override Input Box */}
               <div className="flex gap-2">
                 <input

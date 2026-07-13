@@ -3,15 +3,15 @@ import logging
 from google.adk.apps import App, ResumabilityConfig
 from google.adk.workflow import JoinNode, Workflow
 
-# Import Harness deterministic entry routing nodes
-from app.harness.moderator import grill_node, initialize_debate
-
 # Import modular agent nodes across all 5 specialized roles
 from app.agents.judge.agent import evaluate_and_score_node
 from app.agents.performance.agent import performance_agent_node
 from app.agents.security.agent import security_agent_node
 from app.agents.sre.agent import sre_agent_node
 from app.agents.synthesizer.agent import synthesis_node
+
+# Import Harness deterministic entry routing nodes
+from app.harness.moderator import grill_node, initialize_debate
 from app.types import DebateState
 
 logger = logging.getLogger(__name__)
