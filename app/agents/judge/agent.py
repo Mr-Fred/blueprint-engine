@@ -62,13 +62,19 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
 
     security_critique = ""
     if isinstance(sec_data, dict):
-        security_critique = sec_data.get("security_critique", "")
+        security_critique = (
+            sec_data.get("security_rubric", {}).get("detailed_critique")
+            or sec_data.get("security_critique", "")
+        )
     if not security_critique:
         security_critique = ctx.state.get("temp:latest_security_critique") or ctx.state.get("latest_security_critique", "No security critique generated.")
 
     sre_critique = ""
     if isinstance(sre_data, dict):
-        sre_critique = sre_data.get("sre_critique", "")
+        sre_critique = (
+            sre_data.get("sre_rubric", {}).get("detailed_critique")
+            or sre_data.get("sre_critique", "")
+        )
     if not sre_critique:
         sre_critique = ctx.state.get("temp:latest_sre_critique") or ctx.state.get("latest_sre_critique", "No SRE critique generated.")
 
@@ -86,10 +92,45 @@ async def evaluate_and_score_node(ctx: Context, node_input: Any) -> Event:
     skills_dir = Path(__file__).parent / "skills"
     matched_skills = load_matching_skills(skills_dir, f"{proposal} {combined_critiques}")
 
+    rounds_history = ctx.state.get("rounds_history", [])
+    open_blockers = []
+
+    sec_rubric = sec_data.get("security_rubric") if isinstance(sec_data, dict) else None
+    if not sec_rubric:
+        sec_rubric = ctx.state.get("latest_security_rubric")
+    if isinstance(sec_rubric, dict):
+        for t in sec_rubric.get("stride_threat_register", []):
+            if isinstance(t, dict) and t.get("status", "OPEN").upper() == "OPEN":
+                open_blockers.append(t)
+            elif hasattr(t, "status") and getattr(t, "status", "OPEN").upper() == "OPEN":
+                open_blockers.append(t)
+    elif hasattr(sec_rubric, "stride_threat_register"):
+        for t in getattr(sec_rubric, "stride_threat_register", []):
+            status = t.get("status", "OPEN") if isinstance(t, dict) else getattr(t, "status", "OPEN")
+            if str(status).upper() == "OPEN":
+                open_blockers.append(t)
+
+    sre_rubric = sre_data.get("sre_rubric") if isinstance(sre_data, dict) else None
+    if not sre_rubric:
+        sre_rubric = ctx.state.get("latest_sre_rubric")
+    if isinstance(sre_rubric, dict):
+        for g in sre_rubric.get("sre_gap_register", []):
+            if isinstance(g, dict) and g.get("status", "OPEN").upper() == "OPEN":
+                open_blockers.append(g)
+            elif hasattr(g, "status") and getattr(g, "status", "OPEN").upper() == "OPEN":
+                open_blockers.append(g)
+    elif hasattr(sre_rubric, "sre_gap_register"):
+        for g in getattr(sre_rubric, "sre_gap_register", []):
+            status = g.get("status", "OPEN") if isinstance(g, dict) else getattr(g, "status", "OPEN")
+            if str(status).upper() == "OPEN":
+                open_blockers.append(g)
+
     prompt = get_judge_evaluation_prompt(
         proposal=proposal,
         combined_critiques=combined_critiques,
         skills_context=matched_skills,
+        rounds_history=rounds_history,
+        open_blockers=open_blockers,
     )
 
     current_round = ctx.state.get("current_round", 1)

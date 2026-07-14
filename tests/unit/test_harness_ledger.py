@@ -40,3 +40,25 @@ def test_epistemic_scratchpad_add_fact_and_contradiction(tmp_path, monkeypatch):
 
     no_conflict = scratchpad.check_contradiction("We will index users table in postgres")
     assert no_conflict is None
+
+
+def test_epistemic_scratchpad_idempotent_deduplication(tmp_path, monkeypatch):
+    """Test EpistemicScratchpad idempotent deduplication and round prefix update."""
+    monkeypatch.setattr(FilesystemJail, "BASE_OUTPUT_DIR", tmp_path)
+    scratchpad = EpistemicScratchpad(project_id="test_idempotency_proj")
+
+    # 1. Exact duplicate check
+    evt1 = scratchpad.add_fact("Spanner uses multi-region deployment", verifier="LeadArchitect")
+    assert evt1.event_type == "EpistemicFactAdded"
+    evt2 = scratchpad.add_fact("Spanner uses multi-region deployment", verifier="LeadArchitect")
+    assert evt2.event_type == "EpistemicFactUnchanged"
+    assert len(scratchpad.verified_facts) == 1
+
+    # 2. Keyed prefix update check
+    evt3 = scratchpad.add_fact("Round 1 Architectural Design Decision: Original draft", verifier="JudgeAgent")
+    assert evt3.event_type == "EpistemicFactAdded"
+    evt4 = scratchpad.add_fact("Round 1 Architectural Design Decision: Updated refined draft", verifier="JudgeAgent")
+    assert evt4.event_type == "EpistemicFactUpdated"
+    assert len(scratchpad.verified_facts) == 2
+    assert "Updated refined draft" in scratchpad.verified_facts[1].statement
+

@@ -93,3 +93,44 @@ async def test_grill_node_formats_past_history_and_question_number():
     assert ctx.state["grill_history"][0]["content"] == "Question 1: Host IDE target?"
 
 
+def test_context_summarizer_compact_round_history_and_contentions():
+    from app.types import STRIDEThreatEntry, SREGapEntry
+    long_proposal = "A" * 1200
+    long_critique = "B" * 1200
+    r1 = DebateRound(
+        round_number=1,
+        proposal_draft=long_proposal,
+        critique=long_critique,
+        scores=PillarScores(performance=0.8, scalability=0.8, security=0.8, reliability=0.8, maintainability=0.8, cost_efficiency=0.8),
+    )
+    compacted = ContextSummarizer.compact_round_history([r1])
+    assert len(compacted) == 1
+    assert len(compacted[0].proposal_draft) < len(long_proposal)
+    assert "[Semantic Round Digest]" in compacted[0].proposal_draft or "Decisions:" in compacted[0].proposal_draft
+    assert "[Semantic Critique Digest]" in compacted[0].critique or "Trade-offs:" in compacted[0].critique
+
+    threats = [
+        STRIDEThreatEntry(
+            category="SPOOFING",
+            threat_title="Spoof JWKS",
+            component="Auth",
+            severity="HIGH",
+            status="OPEN",
+            mitigation_status="Pending JWKS cache validation",
+        )
+    ]
+    gaps = [
+        SREGapEntry(
+            category="SPOF",
+            gap_title="Cross-region lock",
+            component="DB",
+            severity="HIGH",
+            status="OPEN",
+            remediation_status="Pending multi-region raft consensus",
+        )
+    ]
+    matrix = ContextSummarizer.build_agreement_matrix([r1], open_threats=threats, open_gaps=gaps)
+    assert any("Spoof JWKS" in c for c in matrix.active_contentions)
+    assert any("Cross-region lock" in c for c in matrix.active_contentions)
+
+

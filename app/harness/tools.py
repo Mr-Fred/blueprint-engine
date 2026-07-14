@@ -165,6 +165,92 @@ def get_harness_tools() -> list:
     ]
 
 
+recent_tool_executions: List[Dict[str, Any]] = []
+
+def record_tool_execution(tool_name: str, args: Dict[str, Any], result_preview: str) -> None:
+    recent_tool_executions.append({
+        "tool_name": tool_name,
+        "args": args,
+        "result_preview": result_preview,
+    })
+
+
+async def generate_content_with_tools(
+    client: Any,
+    model_id: str,
+    prompt: str,
+    tools: list,
+    max_tool_turns: int = 5,
+    system_instruction: str = None,
+) -> str:
+    """
+    Executes a multi-turn non-streaming tool-calling loop against Gemini.
+    When Gemini emits function_calls, executes the tools locally against HarnessToolRegistry
+    and feeds function_response back into the conversation until Gemini outputs Markdown text.
+    """
+    from google.genai import types
+
+    from app.utils import call_with_retry_on_429, log_gemini_inspection
+
+    tool_map = {f.__name__: f for f in tools}
+    contents = [prompt]
+    final_text = ""
+
+    for turn in range(max_tool_turns):
+        config_kwargs = {"tools": tools}
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if turn == 0 and tools:
+            config_kwargs["tool_config"] = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY")
+            )
+
+        config = types.GenerateContentConfig(**config_kwargs)
+        res = await call_with_retry_on_429(
+            lambda: client.aio.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=config,
+            ),
+            max_retries=3,
+            base_delay=3.0,
+        )
+        log_gemini_inspection("generate_content_with_tools", model_id, res, {"turn": turn})
+
+        fcs = getattr(res, "function_calls", None)
+        if not fcs or turn == max_tool_turns - 1:
+            if getattr(res, "text", None):
+                final_text = res.text
+            break
+
+        if getattr(res, "candidates", None) and res.candidates[0].content:
+            contents.append(res.candidates[0].content)
+
+        tool_parts = []
+        for fc in fcs:
+            fc_name = getattr(fc, "name", None)
+            fc_args = dict(getattr(fc, "args", {}))
+            func = tool_map.get(fc_name)
+            if func:
+                try:
+                    tool_res = func(**fc_args)
+                except Exception as e:
+                    tool_res = f"Error executing tool {fc_name}: {str(e)}"
+            else:
+                tool_res = f"Tool {fc_name} not found."
+
+            logger.info(f"Executed harness tool {fc_name}({fc_args}) -> {str(tool_res)[:100]}")
+            record_tool_execution(fc_name, fc_args, str(tool_res)[:120])
+            tool_parts.append(
+                types.Part.from_function_response(name=fc_name, response={"result": tool_res})
+            )
+
+        if tool_parts:
+            contents.append(types.Content(role="tool", parts=tool_parts))
+
+    return final_text
+
+
 async def stream_agent_with_tools(
     client: Any,
     model_id: str,
@@ -180,18 +266,20 @@ async def stream_agent_with_tools(
     Yields each text chunk as it arrives.
     """
     from google.genai import types
+
     from app.utils import extract_stream_chunk_text
 
     tool_map = {f.__name__: f for f in tools}
     contents = [prompt]
 
     for turn in range(max_tool_turns):
-        config_kwargs = {"tools": tools}
-        if response_schema:
-            config_kwargs["response_mime_type"] = "application/json"
-            config_kwargs["response_schema"] = response_schema
+        config_kwargs = {"tools": tools} if turn < max_tool_turns - 1 else {}
+        if turn == 0 and tools:
+            config_kwargs["tool_config"] = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY")
+            )
+        config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
-        config = types.GenerateContentConfig(**config_kwargs)
         from app.utils import call_with_retry_on_429
         response_stream = await call_with_retry_on_429(
             lambda: client.aio.models.generate_content_stream(
@@ -203,13 +291,15 @@ async def stream_agent_with_tools(
             base_delay=3.0,
         )
 
+        turn_model_parts = []
         turn_function_calls = []
+        turn_texts = []
         from app.utils import log_gemini_inspection
         async for chunk in response_stream:
             log_gemini_inspection("generate_content_stream_chunk", model_id, chunk, {"turn": turn})
             text = extract_stream_chunk_text(chunk)
             if text:
-                yield text
+                turn_texts.append(text)
 
             candidates = getattr(chunk, "candidates", None)
             if candidates:
@@ -218,13 +308,37 @@ async def stream_agent_with_tools(
                     parts = getattr(content, "parts", None) if content else None
                     if parts:
                         for p in parts:
+                            turn_model_parts.append(p)
                             fc = getattr(p, "function_call", None)
                             if fc and getattr(fc, "name", None):
                                 turn_function_calls.append((fc.name, dict(getattr(fc, "args", {}))))
 
-        if not turn_function_calls:
+        if not turn_function_calls or turn == max_tool_turns - 1:
+            if response_schema:
+                schema_config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
+                structured_res = await call_with_retry_on_429(
+                    lambda: client.aio.models.generate_content(
+                        model=model_id,
+                        contents=contents,
+                        config=schema_config,
+                    ),
+                    max_retries=3,
+                    base_delay=3.0,
+                )
+                if getattr(structured_res, "text", None):
+                    yield structured_res.text
+            else:
+                for t in turn_texts:
+                    yield t
             break
 
+        if turn_model_parts:
+            contents.append(types.Content(role="model", parts=turn_model_parts))
+
+        tool_parts = []
         for fc_name, fc_args in turn_function_calls:
             func = tool_map.get(fc_name)
             if func:
@@ -236,18 +350,13 @@ async def stream_agent_with_tools(
                 res = f"Tool {fc_name} not found."
 
             logger.info(f"Executed harness tool {fc_name}({fc_args}) -> {str(res)[:100]}")
-            contents.append(
-                types.Content(
-                    role="model",
-                    parts=[types.Part.from_function_call(name=fc_name, args=fc_args)],
-                )
+            record_tool_execution(fc_name, fc_args, str(res)[:120])
+            tool_parts.append(
+                types.Part.from_function_response(name=fc_name, response={"result": res})
             )
-            contents.append(
-                types.Content(
-                    role="tool",
-                    parts=[types.Part.from_function_response(name=fc_name, response={"result": res})],
-                )
-            )
+
+        if tool_parts:
+            contents.append(types.Content(role="tool", parts=tool_parts))
 
 
 

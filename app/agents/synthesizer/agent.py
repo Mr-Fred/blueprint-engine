@@ -48,19 +48,35 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
     concept = ctx.state.get("concept", "")
 
     history = ctx.state.get("rounds_history", [])
-    history_text = ""
-    for r in history:
-        r_dict = r if isinstance(r, dict) else r.model_dump()
-        history_text += (
-            f"\n--- Round {r_dict.get('round_number')} Scores: {r_dict.get('scores')} ---\n"
-            f"PROPOSAL:\n{r_dict.get('proposal_draft')}\n\nCRITIQUE:\n{r_dict.get('critique')}\n"
-        )
+    latest_proposal = ctx.state.get("latest_proposal", "")
+    if not latest_proposal and history:
+        last_round = history[-1]
+        last_dict = last_round if isinstance(last_round, dict) else last_round.model_dump()
+        latest_proposal = last_dict.get("proposal_draft", "")
+
+    from app.harness.moderator import ContextSummarizer
+    from app.harness.tools import HarnessToolRegistry
+
+    compacted_history = ContextSummarizer.compact_round_history(history)
+    agreement_summary = ContextSummarizer.extract_semantic_agreement(
+        compacted_history,
+        open_threats=ctx.state.get("open_threats", []),
+        open_gaps=ctx.state.get("open_gaps", []),
+    )
+    facts = HarnessToolRegistry.query_verified_facts(project_id)
+    facts_text = "\n".join([f"- [{f.get('verifier', 'System')}]: {f.get('statement')}" for f in facts]) if facts else "No verified facts recorded."
+
+    synthesis_context = (
+        f"=== CONSENSUS ARCHITECTURAL BLUEPRINT (FINAL PROPOSAL) ===\n{latest_proposal}\n\n"
+        f"=== ESTABLISHED ARCHITECTURAL AGREEMENT MATRIX ===\n{agreement_summary}\n\n"
+        f"=== VERIFIED EPISTEMIC FACTS ===\n{facts_text}"
+    )
 
     skills_dir = Path(__file__).parent / "skills"
-    matched_skills = load_matching_skills(skills_dir, f"{concept} {history_text}")
+    matched_skills = load_matching_skills(skills_dir, f"{concept} {synthesis_context}")
 
-    prd_prompt = get_prd_synthesis_prompt(concept, history_text, matched_skills)
-    arch_prompt = get_architecture_synthesis_prompt(concept, history_text, matched_skills)
+    prd_prompt = get_prd_synthesis_prompt(concept, synthesis_context, matched_skills)
+    arch_prompt = get_architecture_synthesis_prompt(concept, synthesis_context, matched_skills)
 
     from app.harness.tools import HarnessToolRegistry
     from app.harness.skills_registry import JITSkillRegistry
@@ -111,7 +127,7 @@ async def synthesis_node(ctx: Context, node_input: Any) -> Event:
         try:
             bundle_response = await client.aio.models.generate_content(
                 model=settings.synthesizer_model_id,
-                contents=f"Synthesize the complete multi-file architecture bundle for project '{concept}' from debate history:\n{history_text}\nPRD Guidance:\n{prd_prompt}\nArchitecture Guidance:\n{arch_prompt}",
+                contents=f"Synthesize the complete multi-file architecture bundle for project '{concept}' from consensus architectural signal:\n{synthesis_context}\nPRD Guidance:\n{prd_prompt}\nArchitecture Guidance:\n{arch_prompt}",
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=SynthesisBundlePayload,

@@ -158,7 +158,9 @@ async def security_agent_node(ctx: Context, node_input: Any) -> Event:
     ctx.state["temp:latest_security_critique"] = critique_text
     if isinstance(node_input, dict):
         output_payload = dict(node_input)
-        output_payload["security_critique"] = critique_text
+        output_payload.pop("proposal", None)
+        output_payload.pop("security_critique", None)
+        output_payload.pop("sre_critique", None)
         output_payload["security_rubric"] = rubric.model_dump()
     else:
         output_payload = critique_text

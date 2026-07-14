@@ -151,13 +151,15 @@ async def sre_agent_node(ctx: Context, node_input: Any) -> Event:
     ctx.state["temp:latest_sre_critique"] = critique_text
     if isinstance(node_input, dict):
         output_payload = dict(node_input)
-        output_payload["sre_critique"] = critique_text
+        output_payload.pop("proposal", None)
+        output_payload.pop("security_critique", None)
+        output_payload.pop("sre_critique", None)
         output_payload["sre_rubric"] = rubric.model_dump()
     else:
         output_payload = critique_text
 
-    from app.utils import extract_token_usage_dict
     from app.harness.tracing import DebateTracer
+    from app.utils import extract_token_usage_dict
     DebateTracer.record_span(
         ctx=ctx,
         span_name="AGENT_CRITIQUE_GENERATED",

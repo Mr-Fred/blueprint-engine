@@ -47,21 +47,26 @@ async def performance_agent_node(ctx: Context, node_input: Any) -> Event:
     caveman_trigger = " caveman mode" if ctx.state.get("caveman_mode", True) else ""
     matched_skills = load_matching_skills(skills_dir, f"{proposal}{caveman_trigger}")
 
+    from app.harness.moderator import ContextSummarizer
+    from app.harness.tools import format_tools_for_interactions, get_harness_tools
+
+    validated_history = [DebateRound.model_validate(r) if isinstance(r, dict) else r for r in history]
+    compacted_history = ContextSummarizer.compact_round_history(validated_history)
+
     prompt = get_performance_prompt(
         proposal,
         current_round,
-        history,
+        compacted_history,
         judge_directive=judge_directive,
         skills_context=matched_skills,
         project_id=project_id
     )
 
-    from app.harness.moderator import ContextSummarizer
-    from app.harness.tools import format_tools_for_interactions, get_harness_tools
-
-    agreement_matrix = ContextSummarizer.extract_semantic_agreement([
-        DebateRound.model_validate(r) if isinstance(r, dict) else r for r in history
-    ])
+    agreement_matrix = ContextSummarizer.extract_semantic_agreement(
+        compacted_history,
+        open_threats=ctx.state.get("open_threats", []),
+        open_gaps=ctx.state.get("open_gaps", []),
+    )
     prompt = (
         f"{prompt}\n\nExisting Agreement Matrix:\n{agreement_matrix.model_dump_json(indent=2)}"
     )
@@ -115,27 +120,20 @@ async def performance_agent_node(ctx: Context, node_input: Any) -> Event:
                     yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
             if not proposal_text.strip():
-                logger.warning("Empty stream text for performance agent proposal, running non-streaming text fallback with retry.")
-                from app.utils import call_with_retry_on_429, log_gemini_inspection
-                res = await call_with_retry_on_429(
-                    lambda: client.aio.models.generate_content(
-                        model=settings.grill_model_id,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=(
-                                "You are the Lead Performance & Scaling Architect. Output a comprehensive, highly detailed "
-                                "markdown architectural proposal blueprint with Mermaid diagrams, data storage topology, API contracts, "
-                                "scaling limits, and an Agreement Matrix JSON block."
-                            )
-                        ),
+                logger.warning("Empty stream text for performance agent proposal, running non-streaming tool loop fallback.")
+                from app.harness.tools import generate_content_with_tools
+                proposal_text = await generate_content_with_tools(
+                    client=client,
+                    model_id=settings.grill_model_id,
+                    prompt=prompt,
+                    tools=harness_tools,
+                    system_instruction=(
+                        "You are the Lead Performance & Scaling Architect. Use your tools (`read_skill`, `lookup_architectural_pattern`, `query_verified_facts`) "
+                        "and output a comprehensive, highly detailed markdown architectural proposal blueprint."
                     ),
-                    max_retries=3,
-                    base_delay=3.0,
                 )
-                log_gemini_inspection("generate_content", settings.grill_model_id, res, {"role": "performance"})
-                if not getattr(res, "text", None) or not res.text.strip():
+                if not proposal_text.strip():
                     raise RuntimeError("Lead Architect failed to generate architectural proposal blueprint after retries.")
-                proposal_text = res.text
                 yield Event(content=types.Content(role="model", parts=[types.Part.from_text(text=proposal_text)]))
 
             # Check Left-Shifted sensor guardrails before accepting proposal

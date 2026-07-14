@@ -23,7 +23,7 @@ def test_harness_tool_registry():
 
     # Verified facts manipulation
     res = HarnessToolRegistry.add_verified_fact("proj_test", "Spanner is multi-region", "tester")
-    assert res.get("event_type") == "EpistemicFactAdded"
+    assert res.get("event_type") in ("EpistemicFactAdded", "EpistemicFactUnchanged")
     facts = HarnessToolRegistry.query_verified_facts("proj_test")
     assert any("Spanner is multi-region" in f.get("statement", "") for f in facts)
 

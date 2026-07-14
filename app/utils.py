@@ -103,6 +103,7 @@ def load_matching_skills(skills_dir: Path, text_to_match: str = "") -> str:
     from app.harness.skills_registry import JITSkillRegistry
 
     matched_skills = []
+    all_skills = []
     text_lower = text_to_match.lower()
     stop_words = {
         "and", "for", "the", "with", "from", "this", "that", "use", "when", "how",
@@ -127,15 +128,20 @@ def load_matching_skills(skills_dir: Path, text_to_match: str = "") -> str:
         if is_match:
             desc = meta.get("description", "").strip()
             matched_skills.append(f"- **{skill_name}**: {desc} (Invoke tool `read_skill(\"{skill_name}\")` to inspect full markdown instructions)")
+        all_skills.append(f"- **{skill_name}**: {meta.get('description', '').strip()} (Invoke tool `read_skill(\"{skill_name}\")`)")
 
-    if not matched_skills:
+    skills_to_show = matched_skills if matched_skills else all_skills
+    if not skills_to_show:
         return ""
 
     header = (
-        "Available Domain Skills (Lightweight Index):\n"
-        "You can dynamically invoke `read_skill(skill_name)` or `search_skills(query)` to read complete markdown instructions on demand:\n"
+        "Available Domain Skills & Tool Calling Mandate:\n"
+        "CRITICAL INSTRUCTION: Before finalizing your architectural response, you MUST use your tool-calling capabilities:\n"
+        "1. Call `read_skill(skill_name)` to load detailed instructions for relevant skills listed below.\n"
+        "2. Call `lookup_architectural_pattern(pattern_name)` or `check_owasp_stride_vector(component_type)` as needed.\n\n"
+        "Available Skills:\n"
     )
-    return header + "\n".join(matched_skills)
+    return header + "\n".join(skills_to_show)
 
 
 def extract_stream_chunk_text(chunk: Any) -> str:
@@ -192,11 +198,10 @@ def extract_stream_chunk_text(chunk: Any) -> str:
 
     return ""
 
-
 def truncate_prompt_text(text: str, max_chars: int = 4500) -> str:
     """
-    Truncates large prompt strings or historical drafts to prevent context window bloat
-    and quadratic token growth across debate rounds. Preserves both head and tail context.
+    Deprecated: Truncates large prompt strings or historical drafts.
+    Preserves both head and tail context.
     """
     if not text or not isinstance(text, str):
         return ""
@@ -208,7 +213,6 @@ def truncate_prompt_text(text: str, max_chars: int = 4500) -> str:
         + "\n\n... [TRUNCATED FOR CONTEXT WINDOW EFFICIENCY] ...\n\n"
         + text[-half:].lstrip()
     )
-
 
 
 def extract_interaction_id(chunk: Any) -> str | None:

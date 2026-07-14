@@ -8,7 +8,7 @@ from google.adk.workflow import node
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.types import DebateRound, PillarScores
+from app.types import DebateRound, PillarScores, SREGapEntry, STRIDEThreatEntry
 from app.utils import parse_node_input
 
 logger = logging.getLogger(__name__)
@@ -39,17 +39,113 @@ class RoundManager:
         return current_round >= self.max_rounds
 
 
+class RoundSummaryLedger(BaseModel):
+    """Structured semantic digest of a completed debate round extracted via summarizer model."""
+    core_decisions: List[str] = Field(default_factory=list, description="Key architectural decisions made in this round")
+    resolved_risks: List[str] = Field(default_factory=list, description="Threats or bottlenecks successfully mitigated")
+    open_tradeoffs: List[str] = Field(default_factory=list, description="Unresolved disputes or trade-offs requiring focus")
+
+
 class ContextSummarizer:
     """
-    Condenses previous debate rounds into an AgreementMatrix so agents do not repeat arguments.
-    Supports deterministic heuristic synthesis as well as lightweight semantic structured model extraction.
+    Condenses previous debate rounds into an AgreementMatrix so agents do not repeat arguments,
+    and compacts historical round drafts to enforce state hygiene across turn boundaries.
     """
 
+    @classmethod
+    def compact_round_history(cls, rounds_history: List[DebateRound], max_chars: Optional[int] = None) -> List[DebateRound]:
+        """
+        Compacts intermediate debate rounds to eliminate prompt token bloat and discarded drafts
+        using structured semantic extraction (RoundSummaryLedger) via summarizer_model_id.
+        Falls back to deterministic extraction if mock_mode or on API error.
+        """
+        compacted: List[DebateRound] = []
+        for rnd in rounds_history:
+            prop = rnd.proposal_draft or ""
+            crit = rnd.critique or ""
+            if len(prop) <= 400 and len(crit) <= 400:
+                compacted.append(rnd)
+                continue
+
+            if settings.mock_mode:
+                prop_summary = "\n".join([l for l in prop.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")][:4]) or "Core architectural baseline proposed."
+                crit_summary = "\n".join([l for l in crit.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")][:4]) or "Review completed with no critical blockers."
+                compacted.append(
+                    DebateRound(
+                        round_number=rnd.round_number,
+                        proposal_draft=f"[Semantic Round Digest]\nDecisions:\n{prop_summary}",
+                        critique=f"[Semantic Critique Digest]\nTrade-offs:\n{crit_summary}",
+                        scores=rnd.scores,
+                        judge_directive=rnd.judge_directive,
+                    )
+                )
+                continue
+
+            try:
+                client = settings.get_genai_client()
+                prompt = (
+                    f"Summarize round {rnd.round_number} into structured architectural decisions, "
+                    f"resolved risks, and open tradeoffs:\n\nProposal:\n{prop}\n\nCritique:\n{crit}"
+                )
+                response = client.models.generate_content(
+                    model=settings.summarizer_model_id,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": RoundSummaryLedger,
+                        "temperature": 0.1,
+                    },
+                )
+                ledger = RoundSummaryLedger.model_validate_json(response.text)
+                prop_digest = "### Core Decisions:\n" + "\n".join(f"- {d}" for d in ledger.core_decisions or ["Baseline architecture"]) + "\n### Resolved Risks:\n" + "\n".join(f"- {r}" for r in ledger.resolved_risks or ["None"])
+                crit_digest = "### Open Trade-offs:\n" + "\n".join(f"- {t}" for t in ledger.open_tradeoffs or ["No blocking trade-offs"])
+                compacted.append(
+                    DebateRound(
+                        round_number=rnd.round_number,
+                        proposal_draft=prop_digest,
+                        critique=crit_digest,
+                        scores=rnd.scores,
+                        judge_directive=rnd.judge_directive,
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Semantic round compaction failed ({e}); falling back to deterministic extraction.")
+                prop_summary = "\n".join([l for l in prop.splitlines() if l.strip().startswith("-")][:4]) or prop[:400]
+                crit_summary = "\n".join([l for l in crit.splitlines() if l.strip().startswith("-")][:4]) or crit[:400]
+                compacted.append(
+                    DebateRound(
+                        round_number=rnd.round_number,
+                        proposal_draft=f"[Compacted Digest]: {prop_summary}",
+                        critique=f"[Compacted Digest]: {crit_summary}",
+                        scores=rnd.scores,
+                        judge_directive=rnd.judge_directive,
+                    )
+                )
+
+        return compacted
+
     @staticmethod
-    def build_agreement_matrix(rounds_history: List[DebateRound]) -> AgreementMatrix:  # noqa: UP006
+    def build_agreement_matrix(
+        rounds_history: List[DebateRound],
+        open_threats: Optional[List[STRIDEThreatEntry]] = None,
+        open_gaps: Optional[List[SREGapEntry]] = None,
+    ) -> AgreementMatrix:  # noqa: UP006
         """Deterministic heuristic fallback that synthesizes an AgreementMatrix from historical DebateRound objects."""
         agreed: List[str] = []  # noqa: UP006
         contentions: List[str] = []  # noqa: UP006
+
+        if open_threats:
+            for t in open_threats:
+                if getattr(t, "status", "OPEN") == "OPEN":
+                    title = getattr(t, "threat_title", getattr(t, "threat", str(t)))
+                    if title not in contentions:
+                        contentions.append(f"[STRIDE Threat] {title}")
+        if open_gaps:
+            for g in open_gaps:
+                if getattr(g, "status", "OPEN") == "OPEN":
+                    title = getattr(g, "gap_title", getattr(g, "gap", str(g)))
+                    if title not in contentions:
+                        contentions.append(f"[SRE Gap] {title}")
 
         for rnd in rounds_history:
             prop_lines = [l.strip() for l in rnd.proposal_draft.splitlines() if l.strip().startswith("-") or l.strip().startswith("*")]
@@ -60,8 +156,9 @@ class ContextSummarizer:
                     agreed.append(l.lstrip("-* "))
             for l in crit_lines[:3]:
                 if any(kw in l.lower() for kw in ("risk", "latency", "bottleneck", "contention", "tradeoff")):
-                    if l not in contentions:
-                        contentions.append(l.lstrip("-* "))
+                    cleaned = l.lstrip("-* ")
+                    if cleaned not in contentions:
+                        contentions.append(cleaned)
 
         summary_parts = ["### Points of Architectural Agreement:"]
         summary_parts.extend(f"- {p}" for p in agreed or ["Baseline concept established"])
@@ -75,18 +172,23 @@ class ContextSummarizer:
         )
 
     @classmethod
-    def extract_semantic_agreement(cls, rounds_history: List[DebateRound]) -> AgreementMatrix:
+    def extract_semantic_agreement(
+        cls,
+        rounds_history: List[DebateRound],
+        open_threats: Optional[List[STRIDEThreatEntry]] = None,
+        open_gaps: Optional[List[SREGapEntry]] = None,
+    ) -> AgreementMatrix:
         """
         Uses a lightweight Gemini Flash call with structured output schema (AgreementMatrixExtraction)
         to extract semantic architectural agreements and contentions. Falls back to deterministic heuristic if mock_mode.
         """
         if settings.mock_mode or not rounds_history:
-            return cls.build_agreement_matrix(rounds_history)
+            return cls.build_agreement_matrix(rounds_history, open_threats=open_threats, open_gaps=open_gaps)
 
         try:
             client = settings.get_genai_client()
             history_summary = "\n\n".join(
-                f"Round {rnd.round_number}:\nProposal: {rnd.proposal_draft[:600]}\nCritique: {rnd.critique[:600]}"
+                f"Round {rnd.round_number}:\nProposal: {rnd.proposal_draft}\nCritique: {rnd.critique}"
                 for rnd in rounds_history
             )
             prompt = (
@@ -96,7 +198,7 @@ class ContextSummarizer:
             )
 
             response = client.models.generate_content(
-                model=settings.auditor_model_id,
+                model=settings.summarizer_model_id,
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
@@ -106,19 +208,33 @@ class ContextSummarizer:
             )
 
             extraction = AgreementMatrixExtraction.model_validate_json(response.text)
+            contentions = list(extraction.active_contentions or [])
+            if open_threats:
+                for t in open_threats:
+                    if getattr(t, "status", "OPEN") == "OPEN":
+                        title = getattr(t, "threat_title", getattr(t, "threat", str(t)))
+                        if title not in contentions:
+                            contentions.append(f"[STRIDE Threat] {title}")
+            if open_gaps:
+                for g in open_gaps:
+                    if getattr(g, "status", "OPEN") == "OPEN":
+                        title = getattr(g, "gap_title", getattr(g, "gap", str(g)))
+                        if title not in contentions:
+                            contentions.append(f"[SRE Gap] {title}")
+
             summary_parts = ["### Points of Architectural Agreement:"]
             summary_parts.extend(f"- {p}" for p in extraction.agreed_points or ["Baseline concept established"])
             summary_parts.append("\n### Active Architectural Contentions:")
-            summary_parts.extend(f"- {c}" for c in extraction.active_contentions or ["No critical blocking contentions reported"])
+            summary_parts.extend(f"- {c}" for c in contentions or ["No critical blocking contentions reported"])
 
             return AgreementMatrix(
                 agreed_points=extraction.agreed_points,
-                active_contentions=extraction.active_contentions,
+                active_contentions=contentions,
                 summary_text="\n".join(summary_parts),
             )
         except Exception as e:
             logger.warning(f"Semantic agreement extraction failed ({e}); falling back to deterministic heuristic.")
-            return cls.build_agreement_matrix(rounds_history)
+            return cls.build_agreement_matrix(rounds_history, open_threats=open_threats, open_gaps=open_gaps)
 
 
 # --- HARNESS DETERMINISTIC ROUTING CONTROL PREDICATES ---

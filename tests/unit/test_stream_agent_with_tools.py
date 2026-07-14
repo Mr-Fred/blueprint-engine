@@ -78,3 +78,51 @@ async def test_stream_agent_with_tools_executes_tool_and_yields_text():
     full_output = "".join(texts)
     assert "### Proposed Architecture" in full_output
     assert client.aio.models.turn == 2
+
+
+class MockRes:
+    def __init__(self, text=None, function_calls=None):
+        self.text = text
+        if function_calls:
+            class MockFC:
+                def __init__(self, name, args):
+                    self.name = name
+                    self.args = args
+            self.function_calls = [MockFC(name, args) for name, args in function_calls]
+        else:
+            self.function_calls = None
+
+
+class MockNonStreamModels:
+    def __init__(self):
+        self.turn = 0
+
+    async def generate_content(self, model, contents, config):
+        self.turn += 1
+        if self.turn == 1:
+            return MockRes(function_calls=[("add_verified_fact", {"project_id": "proj_nonstream", "statement": "Use Postgres", "verifier": "DBA"})])
+        return MockRes(text="### Proposed Non-Streaming Blueprint\nWe will use Postgres.")
+
+
+@pytest.mark.asyncio
+async def test_generate_content_with_tools_executes_tool_and_returns_text():
+    from app.harness.tools import generate_content_with_tools
+    class MockNonStreamClient:
+        def __init__(self):
+            class Aio:
+                pass
+            self.aio = Aio()
+            self.aio.models = MockNonStreamModels()
+
+    client = MockNonStreamClient()
+    tools = get_harness_tools()
+
+    output = await generate_content_with_tools(
+        client=client,
+        model_id="gemini-test",
+        prompt="Design DB layer",
+        tools=tools,
+    )
+
+    assert "### Proposed Non-Streaming Blueprint" in output
+    assert client.aio.models.turn == 2

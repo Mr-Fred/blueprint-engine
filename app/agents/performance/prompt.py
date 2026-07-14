@@ -1,5 +1,4 @@
 import pathlib
-from app.utils import truncate_prompt_text
 
 
 def get_performance_prompt(concept: str, current_round: int, history: list, judge_directive: str = None, skills_context: str = None, project_id: str = None) -> str:
@@ -23,15 +22,14 @@ Current Round: {current_round}"""
 
     if history:
         last_round = history[-1]
-        prev_proposal = truncate_prompt_text(str(last_round.get('proposal_draft', '')), max_chars=4000)
-        prev_critique = truncate_prompt_text(str(last_round.get('critique', '')), max_chars=4000)
+        prev_proposal = getattr(last_round, "proposal_draft", None) or (last_round.get("proposal_draft", "") if isinstance(last_round, dict) else "")
+        prev_critique = getattr(last_round, "critique", None) or (last_round.get("critique", "") if isinstance(last_round, dict) else "")
         prompt += (
-            f"\n\n--- PREVIOUS ROUND PROPOSAL ---\n{prev_proposal}"
-            f"\n\n--- AUDITORS' STEP-BY-STEP HARDENING & CRITIQUE ---\n{prev_critique}"
-            "\n\nCRITICAL AUDIT REMEDIATION REQUIREMENT:\n"
-            "You MUST systematically apply and address every step-by-step hardening instruction "
-            "provided above by the Security and SRE auditors. Explicitly describe how your refined "
-            "blueprint incorporates their required safeguards, circuit breakers, IAM controls, and observability SLOs."
+            f"\n\n--- PREVIOUS ROUND PROPOSAL DIGEST ---\n{prev_proposal}"
+            f"\n\n--- AUDITORS' HARDENING & CRITIQUE DIGEST ---\n{prev_critique}"
+            "\n\nSTATE HYGIENE & AUDIT REMEDIATION REQUIREMENT:\n"
+            "Do NOT repeat verbose intermediate draft markdown. Address the auditors' required safeguards, "
+            "circuit breakers, and architectural trade-offs directly, building upon atomic Epistemic Scratchpad facts."
         )
 
 

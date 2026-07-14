@@ -93,9 +93,37 @@ class EpistemicScratchpad(BaseModel):
     verified_facts: List[FactEntry] = Field(default_factory=list, description="List of verified facts")
 
     def add_fact(self, statement: str, verifier: str = "LeadArchitect") -> LedgerEvent:
-        """Appends a new mutually verified fact and emits a LedgerEvent."""
+        """Appends or updates a mutually verified fact idempotently and emits a LedgerEvent."""
+        clean_stmt = statement.strip()
+
+        # 1. Exact duplicate check
+        for existing in self.verified_facts:
+            if existing.statement.strip() == clean_stmt:
+                return LedgerEvent(
+                    event_id=f"evt_fact_{existing.fact_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                    event_type="EpistemicFactUnchanged",
+                    payload=existing.model_dump(),
+                )
+
+        # 2. Keyed prefix update check (e.g., "Round 1 Architectural Design Decision:", "System Concept & Scope:")
+        if ":" in clean_stmt:
+            prefix = clean_stmt.split(":", 1)[0].strip()
+            if prefix.startswith(("Round ", "System Concept & Scope", "Verified ")):
+                for existing in self.verified_facts:
+                    if ":" in existing.statement and existing.statement.split(":", 1)[0].strip() == prefix:
+                        existing.statement = clean_stmt
+                        existing.verifier = verifier
+                        existing.timestamp = datetime.now(timezone.utc).isoformat()
+                        self.save()
+                        return LedgerEvent(
+                            event_id=f"evt_fact_{existing.fact_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+                            event_type="EpistemicFactUpdated",
+                            payload=existing.model_dump(),
+                        )
+
+        # 3. Append new fact
         fact_id = f"fact_{len(self.verified_facts) + 1}"
-        entry = FactEntry(fact_id=fact_id, statement=statement, verifier=verifier)
+        entry = FactEntry(fact_id=fact_id, statement=clean_stmt, verifier=verifier)
         self.verified_facts.append(entry)
         self.save()
 

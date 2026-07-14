@@ -8,7 +8,8 @@ class STRIDEThreatEntry(BaseModel):
     threat_title: str = Field(..., description="Short descriptive title of the vulnerability")
     component: str = Field(..., description="Target architectural component or boundary")
     severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(..., description="Severity rating")
-    mitigation_status: str = Field(..., description="Recommended architectural hardening action")
+    status: Literal["OPEN", "RESOLVED"] = Field(default="OPEN", description="Whether this threat remains unmitigated (OPEN) or was fixed in this proposal (RESOLVED)")
+    mitigation_status: str = Field(..., description="Recommended architectural hardening action or proof of resolution")
 
 
 class SecurityRubricEvaluation(BaseModel):
@@ -20,12 +21,23 @@ class SecurityRubricEvaluation(BaseModel):
     detailed_critique: str = Field(..., description="Comprehensive markdown security review explaining vulnerabilities and hardening advice")
 
 
+class SREGapEntry(BaseModel):
+    """Explicit mapping of an SRE reliability or resilience gap to an architectural component."""
+    category: Literal["SPOF", "CASCADING_FAILURE", "OBSERVABILITY_GAP", "CAPACITY_BOTTLENECK", "DISASTER_RECOVERY_GAP", "SLO_DEFICIT"] = Field(..., description="SRE gap category")
+    gap_title: str = Field(..., description="Short descriptive title of the reliability or resilience deficit")
+    component: str = Field(..., description="Target architectural component or boundary")
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(..., description="Severity rating")
+    status: Literal["OPEN", "RESOLVED"] = Field(default="OPEN", description="Whether this gap remains unmitigated (OPEN) or was resolved in this proposal (RESOLVED)")
+    remediation_status: str = Field(..., description="Recommended architectural hardening action or proof of resolution")
+
+
 class SRERubricEvaluation(BaseModel):
     """Google ADK 2.0 structured output schema for the SRE Auditor."""
     high_availability_score: float = Field(..., ge=0.0, le=1.0, description="Normalized score (0.0-1.0) evaluating multi-region/AZ topology and SPOF elimination")
     fault_tolerance_score: float = Field(..., ge=0.0, le=1.0, description="Normalized score (0.0-1.0) verifying circuit breakers, exponential backoff, retry queues, and rate limits")
     observability_score: float = Field(..., ge=0.0, le=1.0, description="Normalized score (0.0-1.0) checking distributed tracing, metrics, and structured logs")
     estimated_uptime_tier: Literal["99.9%", "99.99%", "SUB_99%"] = Field(..., description="Target SLA availability tier mapped to proposed design choices")
+    sre_gap_register: List[SREGapEntry] = Field(default_factory=list, description="Array mapping reliability/resilience gaps to architectural components")
     detailed_critique: str = Field(..., description="Comprehensive markdown SRE review explaining resilience, SLOs, and scalability trade-offs")
 
 

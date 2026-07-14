@@ -1,9 +1,15 @@
 import pathlib
+from typing import Any, Dict, List, Optional
 
-from app.utils import truncate_prompt_text
 
-
-def get_security_prompt(proposal: str, judge_directive: str = None, skills_context: str = None, project_id: str = None) -> str:
+def get_security_prompt(
+    proposal: str,
+    judge_directive: str = None,
+    skills_context: str = None,
+    project_id: str = None,
+    agreement_summary: str = None,
+    previous_threats: Optional[List[Any]] = None,
+) -> str:
     """Constructs the prompt for the Security & Resilience Auditor by dynamically loading guidelines from AGENT.md."""
     agent_dir = pathlib.Path(__file__).parent
     agent_md_path = agent_dir / "AGENT.md"
@@ -13,20 +19,44 @@ def get_security_prompt(proposal: str, judge_directive: str = None, skills_conte
     else:
         guidelines = "You are the Expert Security Auditor."
 
-    truncated_proposal = truncate_prompt_text(proposal, max_chars=4000)
     prompt = f"""{guidelines}
 
 ---
 
 Critique the following architectural proposal draft:
 
-"{truncated_proposal}"
+"{proposal}"
+
 
 
 Provide your security review focusing STRICTLY on:
 1. Identity & Access Management (IAM), OAuth, and Session Security.
 2. Threat modeling, data encryption (at rest and transit), and network isolation.
 3. Input sanitization, OWASP Top 10 mitigation, and compliance (SOC2/GDPR)."""
+
+    if agreement_summary:
+        prompt += (
+            f"\n\n--- ESTABLISHED ARCHITECTURAL AGREEMENT MATRIX ---\n"
+            "STATE HYGIENE MANDATE: Do NOT repeat intermediate draft markdown or re-litigate agreed baseline points below unless a new threat vector is introduced:\n"
+            f"{agreement_summary}"
+        )
+
+    if previous_threats:
+        threat_lines = []
+        for t in previous_threats:
+            t_dict = t.model_dump() if hasattr(t, "model_dump") else (t if isinstance(t, dict) else {})
+            if t_dict:
+                threat_lines.append(
+                    f"- [{t_dict.get('category', 'THREAT')}] {t_dict.get('threat_title', '')} "
+                    f"(Target: {t_dict.get('component', '')}, Previous Status: {t_dict.get('status', 'OPEN')})"
+                )
+        if threat_lines:
+            prompt += (
+                "\n\n--- PREVIOUS ROUND STRIDE THREAT LEDGER ---\n"
+                + "\n".join(threat_lines)
+                + "\nIMPORTANT AUDITOR MANDATE: For each threat listed above, check whether the new proposal draft explicitly mitigates it. "
+                "In your `stride_threat_register`, explicitly set `status='RESOLVED'` if remediated (citing proof in `mitigation_status`) or keep `status='OPEN'` if unmitigated."
+            )
 
     if judge_directive:
         prompt += f"\n\n🚨 CRITICAL PRESIDING JUDGE DIRECTIVE:\n\"{judge_directive}\"\nYou MUST prioritize auditing the proposal's compliance with this judge feedback."

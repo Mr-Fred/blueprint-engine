@@ -17,6 +17,7 @@ class AppConfig(BaseModel):
     auditor_model_id: str = Field(default="gemini-3.5-flash")
     judge_model_id: str = Field(default="gemini-3.1-pro-preview")
     synthesizer_model_id: str = Field(default="gemini-3.1-pro-preview")
+    summarizer_model_id: str = Field(default="gemini-3.1-flash-lite")
     gate_threshold: float = Field(default=0.85)
     max_rounds: int = Field(default=10)
     mock_mode: bool = Field(default=False)
